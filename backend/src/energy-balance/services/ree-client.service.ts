@@ -10,12 +10,37 @@ import { AxiosError } from 'axios';
 @Injectable()
 export class ReeClientService {
   private readonly logger = new Logger(ReeClientService.name);
-  private readonly API_URL =
-    process.env.REE_API_URL || process.env.REE_API_URL_ERROR;
-  private readonly FRONTERAS_API =
-    process.env.REE_FRONTERAS_API_URL || process.env.REE_API_URL_ERROR;
-
-  constructor(private httpService: HttpService) {}
+  // Inicializadas en el constructor tras validar env (ver Guard §A.1 abajo).
+  // Si los env vars faltan, el servicio falla en boot con un mensaje
+  // accionable en lugar del opaco "Invalid URL" de axios (investigación
+  // bug A — propuesta §2.3 cambio A.1 aprobada por el usuario).
+  private readonly API_URL!: string;
+  private readonly FRONTERAS_API!: string;
+  constructor(private httpService: HttpService) {
+    // Fail-fast guard: detecta env vars faltantes ANTES de que cualquier
+    // fetch corra. Antes de este guard, un dev que olvidaba crear
+    // `backend/.env` arrancaba el servidor (MONGODB_URI tiene fallback
+    // en §3.2 CURRENT.md) pero cada request fallaba con "Invalid URL"
+    // opaco porque `API_URL` quedaba como `undefined` frozen al cierre
+    // de este constructor y axios.get(undefined) ⇒ Error("Invalid URL").
+    // Agrega todas las vars faltantes en un solo mensaje accionable (en
+    // vez de tirar por la primera que falta — el dev debería ver TODAS
+    // las que necesita configurar de una).
+    const missing: string[] = [];
+    const apiUrl = process.env.REE_API_URL || process.env.REE_API_URL_ERROR;
+    const fronterasApiUrl =
+      process.env.REE_FRONTERAS_API_URL || process.env.REE_API_URL_ERROR;
+    if (!apiUrl) missing.push('REE_API_URL');
+    if (!fronterasApiUrl) missing.push('REE_FRONTERAS_API_URL');
+    if (missing.length > 0) {
+      const list = missing.join(' y ');
+      const msg = `${list} no configurado${missing.length > 1 ? 's' : ''}. Crea backend/.env desde backend/.env.example o setea ${missing.length > 1 ? 'las variables' : 'la variable'} en tu runtime antes de iniciar el servidor.`;
+      this.logger.error(`[boot] ${msg}`);
+      throw new Error(msg);
+    }
+    this.API_URL = apiUrl;
+    this.FRONTERAS_API = fronterasApiUrl;
+  }
 
   async fetchData({ start, end }: { start: Date; end: Date }) {
     try {

@@ -45,6 +45,12 @@ describe('ReeClientService', () => {
   beforeEach(async () => {
     httpGet = vi.fn();
 
+    // Default env para que el constructor guard (ver §A.1) no falle
+    // durante los tests del happy-path. Cada test que necesite el
+    // camino fallido hace `delete process.env....` explícito.
+    process.env.REE_API_URL = 'http://test.example/energy';
+    process.env.REE_FRONTERAS_API_URL = 'http://test.example/fronteras';
+
     const moduleRef: TestingModule = await Test.createTestingModule({
       providers: [
         ReeClientService,
@@ -59,7 +65,43 @@ describe('ReeClientService', () => {
   });
 
   afterEach(() => {
+    delete process.env.REE_API_URL;
+    delete process.env.REE_FRONTERAS_API_URL;
+    delete process.env.REE_API_URL_ERROR;
     vi.clearAllMocks();
+  });
+
+  describe('constructor guard (boot pre-flight, §A.1)', () => {
+    it('throws actionable error when REE_API_URL and REE_API_URL_ERROR are missing', async () => {
+      delete process.env.REE_API_URL;
+      delete process.env.REE_API_URL_ERROR;
+      await expect(
+        Test.createTestingModule({
+          providers: [
+            ReeClientService,
+            { provide: HttpService, useValue: { get: vi.fn() } },
+          ],
+        }).compile(),
+      ).rejects.toThrow(
+        /REE_API_URL no configurado\. Crea backend\/\.env desde backend\/\.env\.example/,
+      );
+    });
+
+    it('throws actionable error when REE_FRONTERAS_API_URL and REE_API_URL_ERROR are missing', async () => {
+      process.env.REE_API_URL = 'http://test.example/energy';
+      delete process.env.REE_FRONTERAS_API_URL;
+      delete process.env.REE_API_URL_ERROR;
+      await expect(
+        Test.createTestingModule({
+          providers: [
+            ReeClientService,
+            { provide: HttpService, useValue: { get: vi.fn() } },
+          ],
+        }).compile(),
+      ).rejects.toThrow(
+        /REE_FRONTERAS_API_URL no configurado\. Crea backend\/\.env desde backend\/\.env\.example/,
+      );
+    });
   });
 
   describe('fetchData', () => {

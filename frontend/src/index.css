@@ -1,23 +1,105 @@
 @import "tailwindcss";
 
+/* Fonts cargados vía <link rel="preconnect"> + <link rel="stylesheet"> en index.html
+   para evitar el FOUC que produciría el @import de CSS (que bloquea hasta que
+   el stylesheet raíz termine de descargarse). */
+
 :root {
+  /* Design tokens — alias de `frontend/src/libs/design-tokens.ts`. */
+  --c-bg: #0A0F1C;
+  --c-surface: #101828;
+  --c-surface-alt: #0D1420;
+  --c-border: #1E2A42;
+  --c-text: #EAF0FB;
+  --c-muted: #7C8BA6;
+  --c-renewable: #34D399;
+  --c-renewable-dim: #1F5A46;
+  --c-non-renewable: #F0A93D;
+  --c-non-renewable-dim: #6B4E22;
+  --c-live: #38BDF8;
+  --c-danger: #F87171;
+
   --tw-bg-opacity: 1;
   --tw-text-opacity: 1;
-  background-color: #291d3d;
+
+  background-color: var(--c-bg);
+  color: var(--c-text);
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-.dashboard {
-  @apply p-6 h-screen flex flex-col items-center;
+html, body, #root {
+  min-height: 100%;
 }
 
-.data-selector {
-  @apply bg-slate-300 p-6 rounded-lg shadow-md;
+body {
+  background-color: var(--c-bg);
+  color: var(--c-text);
+  margin: 0;
 }
 
-.energy-chart {
-  @apply bg-slate-300 p-4 rounded-lg shadow-md;
+/* Pulso animado del indicador `EN VIVO` en Datos en tiempo real. */
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .4; transform: scale(1.35); }
 }
 
+.pulse-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--c-live);
+  animation: pulseDot 1.8s ease-in-out infinite;
+}
+
+/* Loading spinner enmascarado al paleta live. */
 .loading-spinner {
-  @apply animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500;
+  @apply animate-spin rounded-full h-12 w-12 border-t-2 border-b-2;
+  border-color: var(--c-live);
+}
+
+/* Overrides de react-datepicker para tema oscuro (selector fechas). */
+.react-datepicker-wrapper input,
+.react-datepicker__input-container input {
+  background-color: var(--c-surface-alt) !important;
+  color: var(--c-text) !important;
+  border: 1px solid var(--c-border) !important;
+  padding: 0.5rem 0.75rem !important;
+  border-radius: 0.5rem !important;
+  width: 100% !important;
+}
+
+.react-datepicker {
+  background-color: var(--c-surface) !important;
+  border: 1px solid var(--c-border) !important;
+  color: var(--c-text) !important;
+  font-family: 'Inter', sans-serif !important;
+}
+
+.react-datepicker__header {
+  background-color: var(--c-surface-alt) !important;
+  border-bottom: 1px solid var(--c-border) !important;
+}
+
+.react-datepicker__current-month,
+.react-datepicker__day-name,
+.react-datepicker__day {
+  color: var(--c-text) !important;
+}
+
+.react-datepicker__day:hover {
+  background-color: var(--c-border) !important;
+}
+
+.react-datepicker__day--selected,
+.react-datepicker__day--in-selecting-range,
+.react-datepicker__day--in-range {
+  background-color: var(--c-live) !important;
+  color: var(--c-bg) !important;
+}
+
+.react-datepicker__triangle {
+  display: none;
 }

@@ -39,8 +39,8 @@ const DEFAULT_MONGO_URI = 'mongodb://localhost:27017/energy-balance';
         if (!uri) {
           logger.warn(
             `MONGODB_URI no está definido en el entorno ni en .env. ` +
-            `Usando fallback por defecto: ${DEFAULT_MONGO_URI}. ` +
-            `Para producción define esta var explícitamente en .env o compose.`,
+              `Usando fallback por defecto: ${DEFAULT_MONGO_URI}. ` +
+              `Para producción define esta var explícitamente en .env o compose.`,
           );
           return { uri: DEFAULT_MONGO_URI };
         }

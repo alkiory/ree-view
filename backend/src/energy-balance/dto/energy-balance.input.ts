@@ -8,9 +8,9 @@ import {
 } from 'class-validator';
 
 import { IsMaxDaysRange } from '../../common/validators/is-max-days-range.validator';
+import { MAX_DATE_RANGE_DAYS } from './dto.constants';
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const MAX_DATE_RANGE_DAYS = Number(process.env.MAX_DATE_RANGE_DAYS) || 90;
 
 @InputType()
 export class EnergyBalanceInput {
