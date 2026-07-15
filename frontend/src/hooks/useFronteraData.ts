@@ -21,7 +21,12 @@ const useFronteraData = (startDate: string, endDate: string): UseFronteraDataRes
         },
       },
       onError: (error) => {
-        console.error('GraphQL Error (Frontera):', error);
+        console.error('GraphQL Error (Frontera):', {
+          name: error?.name,
+          message: error?.message,
+          graphQLErrors: error?.graphQLErrors?.map?.((e: any) => e?.message),
+          networkError: (error?.networkError as Error | undefined)?.message,
+        });
       },
       errorPolicy: 'all',
     }

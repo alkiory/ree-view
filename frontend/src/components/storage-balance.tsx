@@ -4,8 +4,17 @@ interface StorageBalanceProps {
   getIntercambios: FronteraType[];
 }
 
-export default function StorageBalance({ getIntercambios }: StorageBalanceProps) {
-  console.debug("🚀 ~ StorageBalance ~ getIntercambios:", getIntercambios)
+export default function StorageBalance({
+  getIntercambios: _getIntercambios,
+}: StorageBalanceProps) {
+  // console.debug removido — bajo React 19 dev + Vite SWC el ApolloError
+  // parcialmente-serializado podía causar `Converting circular structure to JSON`
+  // cuando DevTools o Suspense intentaban renderear el error message.
+  //
+  // `_getIntercambios` se mantiene en el contrato público para futura lógica
+  // Tier-3 (balance de almacenamiento desde frontera). El prefijo `_` indica
+  // que está intencionalmente sin usar por ahora (cumple `noUnusedLocals`).
+  void _getIntercambios;
   const storageData = {
     saldoAlmacenamiento: 0,
     turbinacionBombeo: 0,

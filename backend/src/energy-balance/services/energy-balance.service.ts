@@ -72,18 +72,18 @@ export class EnergyBalanceService {
 
     await this.fetchMissingData({ start, end });
 
+    // Build the Mongo query once, declaratively, including every supported filter.
+    // NOTE: `groupType` lives inside the embedded `attributes` object on the
+    // schema, not at the top level, so we use dot-notation here.
     const query: FilterQuery<EnergyBalance> = {
       startDate: { $gte: start },
       endDate: { $lte: end },
       ...(groupId && { groupId }),
       ...(type && { type }),
+      ...(groupType && { 'attributes.groupType': groupType }),
     };
 
     this.logger.log(`[3] Query MongoDB: ${JSON.stringify(query)}`);
-
-    if (groupId) query.groupId = groupId;
-    if (type) query.type = type;
-    if (groupType) query.groupType = groupType;
 
     const data = await this.balanceModel.find(query).exec();
     this.logger.log(`[4] Data obtained from MongoDB: ${data.length}`);

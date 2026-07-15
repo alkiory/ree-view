@@ -1,16 +1,22 @@
-version: '3'
 services:
   backend:
     build: ./backend
     ports:
       - '3000:3000'
     environment:
-      MONGODB_URI: ${MONGODB_URI}
+      PORT: 3000
+      CORS_ORIGINS: http://localhost:5173,http://localhost:80
+      MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/energy-balance}
       REE_API_URL: https://apidatos.ree.es/es/datos/balance/balance-electrico
       REE_FRONTERAS_API_URL: https://apidatos.ree.es/es/datos/balance/todas-fronteras-fisicos-programados
-      REE_API_URL_ERROR=https: //apidatos.ree.es/invalid-endpoint
+      REE_API_URL_ERROR: https://apidatos.ree.es/invalid-endpoint
     depends_on:
       - mongo
+    # Auto-recovery: si NestJS crashea por una peer dep faltante como pasó
+    # con @apollo/server, el contenedor se reinicia solo. Combinado con el
+    # HEALTHCHECK del Dockerfile, Docker también lo apaga si las queries
+    # a /graphql fallan 3 veces seguidas.
+    restart: unless-stopped
     networks:
       - app-network
 
@@ -19,7 +25,7 @@ services:
     ports:
       - '80:80'
     environment:
-    - VITE_API_URL=http://backend:3000
+      - VITE_API_URL=/graphql
     depends_on:
       - backend
     networks:
@@ -31,6 +37,11 @@ services:
       MONGO_INITDB_DATABASE: energy-balance
     volumes:
       - mongo-data:/data/db
+    # Exponer 27017 al host permite usar `pnpm dev` (en el host) contra
+    # el Mongo del compose sin instalar MongoDB localmente. En prod se
+    # retira esta línea para mantener el puerto interno.
+    ports:
+      - '27017:27017'
     networks:
       - app-network
 

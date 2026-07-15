@@ -2,23 +2,35 @@ import { useState } from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 
+// Tipos canónicos de groupId; deben coincidir con lo que devuelve la API
+// de REE y con lo que mapea processGenerationData en el frontend.
+export type EnergyGroupId = 'Renovable' | 'No-Renovable';
+
+// Mapped types con `readonly [K in T]: V` triggerean un quirk en el parser
+// de SWC (usado por @vitejs/plugin-react-swc) — `Expected ']', got 'in'`.
+// Forma explícita, estructuralmente equivalente y 100% compatible con
+// tsc + swc + babel.
 interface EnergyTypes {
-  [key: string]: { id: string; name: string }[];
+  Renovable: Array<{ id: string; name: string }>;
+  'No-Renovable': Array<{ id: string; name: string }>;
 }
 
-const energyGroups = [
+// El `id` aquí debe ser el `groupId` canónico que devuelve la API de REE
+// y se persiste en MongoDB. El tipo `EnergyGroupId` se exporta para
+// reutilizarlo en otros componentes que comparen strings.
+const energyGroups: ReadonlyArray<{ id: EnergyGroupId; name: string }> = [
   { id: 'Renovable', name: 'Renovable' },
   { id: 'No-Renovable', name: 'No renovable' },
 ];
 
 const energyTypes: EnergyTypes = {
-  Renovable: [
+  'Renovable': [
     { id: 'eolica', name: 'Eólica' },
     { id: 'hidraulica', name: 'Hidráulica' },
     { id: 'solar', name: 'Solar' },
     { id: 'termica', name: 'Termica' },
   ],
-  'No renovable': [
+  'No-Renovable': [
     { id: 'nuclear', name: 'Nuclear' },
     { id: 'carbon', name: 'Carbón' },
     { id: 'ciclo-combinado', name: 'Ciclo Combinado' },
@@ -38,8 +50,10 @@ export default function DataSelector({
 }) {
   const [startDate, setStartDate] = useState<Date>(new Date());
   const [endDate, setEndDate] = useState<Date>(new Date());
-  const [selectedGroup, setSelectedGroup] = useState<string | null>('');
-  const [selectedType, setSelectedType] = useState<string | null>('');
+  // Estado como `string` porque los elementos <select> siempre emiten string.
+  // El narrowing a `EnergyGroupId | ''` se hace en handleApply con guard.
+  const [selectedGroup, setSelectedGroup] = useState<string>('');
+  const [selectedType, setSelectedType] = useState<string>('');
 
   const handleGroupChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedGroup(e.target.value);
@@ -50,12 +64,19 @@ export default function DataSelector({
     setSelectedType(e.target.value);
   };
 
+  // Guard: confirma que el string del select es uno de los IDs canónicos
+  // antes de estrechar a `EnergyGroupId`. Devuelve `null` para el valor "".
+  const toGroupIdOrNull = (value: string): EnergyGroupId | null => {
+    if (value === 'Renovable' || value === 'No-Renovable') return value;
+    return null;
+  };
+
   const handleApply = () => {
     onDateChange({
       start: startDate.toISOString().split('T')[0],
       end: endDate.toISOString().split('T')[0],
     });
-    onGroupChange(selectedGroup === '' ? null : selectedGroup);
+    onGroupChange(toGroupIdOrNull(selectedGroup));
     onTypeChange(selectedType === '' ? null : selectedType);
   };
 
@@ -107,7 +128,7 @@ export default function DataSelector({
             className={`border p-2 rounded w-full ${!selectedGroup ? 'bg-gray-300 cursor-help' : 'bg-slate-200'}`}
           >
             <option value="">All</option>
-            {selectedGroup && energyTypes[selectedGroup]?.map((type) => (
+            {selectedGroup && energyTypes[selectedGroup as EnergyGroupId]?.map((type) => (
               <option key={type.id} value={type.id}>{type.name}</option>
             ))}
           </select>
