@@ -14,19 +14,13 @@ const httpLink = createHttpLink({
   uri: apiUrl,
 });
 
+// Sin `defaultOptions` global. Los hooks (`useEnergyData`, `useFronteraData`,
+// y cualquier futuro `useXxxData`) declaran `errorPolicy: 'all'` localmente
+// para que `<*ErrorState>` se renderice cuando el resolver falla. Cualquier
+// defaultOptions aquí es dead-config: los hooks siempre lo override.
 const client = new ApolloClient({
   link: httpLink,
   cache: new InMemoryCache(),
-  defaultOptions: {
-    watchQuery: {
-      fetchPolicy: 'no-cache',
-      errorPolicy: 'ignore',
-    },
-    query: {
-      fetchPolicy: 'cache-first',
-      errorPolicy: 'all',
-    },
-  },
 });
 
 export default client;

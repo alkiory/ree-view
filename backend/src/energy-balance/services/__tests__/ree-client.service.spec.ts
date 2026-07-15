@@ -166,6 +166,20 @@ describe('ReeClientService', () => {
         InternalServerErrorException,
       );
     });
+
+    it('propagates the original error message in the thrown InternalServerErrorException (fetchData)', async () => {
+      // Lock-in del contrato nuevo (ver §3.14 en agent-memory/CURRENT.md):
+      // la causa real llega al cliente Apollo como parte del mensaje
+      // (no como string genérico). Una sola aserción `toMatchObject`
+      // evita fragilidades con matcher states sucesivos sobre la misma
+      // rejected promise.
+      httpGet.mockReturnValue(throwError(() => new Error('ree-flow-down')));
+      await expect(service.fetchData({ start, end })).rejects.toMatchObject({
+        message: 'Failed to fetch energy data: ree-flow-down',
+        cause: expect.objectContaining({ message: 'ree-flow-down' }),
+      });
+      expect(httpGet).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('fetchFronteras', () => {
@@ -232,6 +246,18 @@ describe('ReeClientService', () => {
       await expect(
         service.fetchFronteras({ start, end }),
       ).rejects.toBeInstanceOf(InternalServerErrorException);
+    });
+
+    it('propagates the original error message in the thrown InternalServerErrorException (fetchFronteras)', async () => {
+      // Simétrico al test de fetchData: misma política de messaging.
+      httpGet.mockReturnValue(throwError(() => new Error('frontera-down')));
+      await expect(
+        service.fetchFronteras({ start, end }),
+      ).rejects.toMatchObject({
+        message: 'Failed to fetch energy data: frontera-down',
+        cause: expect.objectContaining({ message: 'frontera-down' }),
+      });
+      expect(httpGet).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -26,10 +26,27 @@ async function bootstrap() {
 
   // CORS seguro: lista blanca de orígenes configurable vía env.
   // En desarrollo el frontend Vite corre en http://localhost:5173
-  // y en Docker se sirve bajo http://localhost:80.
+  // y en Docker se sirve bajo http://localhost:80. El sandbox de Apollo
+  // Server 4 (embedded UI, self-hosted) responde same-origin → no requiere
+  // nada extra, pero un dev que manualmente abra `http://localhost:3000/graphql`
+  // desde el navegador dispara peticiones con `Origin: http://localhost:3000`,
+  // por lo que lo añadimos para que funcione en inspección manual.
+  // `https://studio.apollographql.com` está pensado para cuando se use el
+  // plugin `ApolloServerPluginLandingPageProductionDefault` (no instalado
+  // todavía en este repo, pero forward-compatibilidad no cuesta nada).
   // Usamos `||` (no `??`) para que un valor vacío o solo-whitespace caiga al default;
   // un `CORS_ORIGINS=""` mal seteado no debe terminar bloqueando toda petición.
-  const defaultOrigins = 'http://localhost:5173,http://localhost:80';
+  //
+  // ⚠️ Dev-only: estos defaults NO deberían estar permitidos en producción.
+  // Cuando `NODE_ENV === 'production'`, defaultOrigins se vacía para forzar
+  // a que `CORS_ORIGINS` esté explícitamente configurado. Caveat: este check
+  // depende de que el operador setee NODE_ENV=production explícitamente
+  // (systemd/PM2/Docker no lo hacen por default). Mejorable con un guard de
+  // ConfigSchema cuando se introduzca validación de env (ver CURRENT.md §6).
+  const isProd = process.env.NODE_ENV === 'production';
+  const defaultOrigins = isProd
+    ? ''
+    : 'http://localhost:5173,http://localhost:80,http://localhost:3000,https://studio.apollographql.com';
   const allowedOrigins = (process.env.CORS_ORIGINS || defaultOrigins)
     .split(',')
     .map((o) => o.trim())

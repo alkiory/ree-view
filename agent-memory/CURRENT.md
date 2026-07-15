@@ -211,6 +211,95 @@ const [selectedGroup, setSelectedGroup] = useState<EnergyGroupId | ''>('');
 
 **POR QUÉ**: convención NestJS-Mongoose `name string` — `MongooseModule.forFeature([{ name: EnergyBalance.name, schema: EnergyBalanceSchema }])`. El `name` identifica el modelo en el registry; plurales rompen consistencia con `@nestjs/mongoose@11`.
 
+### 3.13 Apollo `useQuery().refetch` + `onClick` envoltura obligatoria
+
+**Regla** (`frontend/src/components/states/*-error-state.tsx`): **NUNCA** `onClick={refetch}`. **SIEMPRE** `onClick={() => refetch()}`.
+
+```tsx
+// ⛔ MAL — React pasa el SyntheticEvent al handler. Apollo toma el Event
+//        como `variables` del refetch → optimism-JSON-walk hace cycle
+//        por __reactFiber$xxx → FiberNode.stateNode → DOM element, y
+//        lanza `Uncaught TypeError: Converting circular structure to JSON`
+//        desde `canonicalStringify` → `getObservableFromLink`.
+<button onClick={refetch}>Retry</button>
+
+// ✅ BIEN — arrow explícita descarta cualquier argumento del handler.
+<button onClick={() => refetch()}>Retry</button>
+```
+
+**POR QUÉ es un bug**: Apollo Client 3.x firma `refetch(variables?: Partial<TVars>)`. React pasa el `MouseEvent` sintético como primer arg → Apollo lo interpreta como `variables` → `QueryManager.getObservableFromLink` corre `canonicalStringify(operation)` para hashing, walk exhaustivo → cycle.
+
+**Alcance**: NO es problema sólo de los *ErrorState actuales. Cualquier `refetch` de Apollo Client invocado como `onClick={refetch}` lo reproduce. **REGLA duradera al añadir nuevos retry buttons en este proyecto**.
+
+### 3.14 ReeClientService non-Axios catch: propagar el mensaje original
+
+**Decisión** (`backend/src/energy-balance/services/ree-client.service.ts`): en el catch NO-Axios de `fetchData`/`fetchFronteras` ahora:
+- Extrae `detail = error?.message || 'non-Axios error in ree-client'`.
+- Llama `this.logger.error(`REE/Frontera => Unexpected error: ${detail}`, error?.stack ?? String(error))` (stack completo).
+- Lanza `InternalServerErrorException(`Failed to fetch energy data: ${detail}`, { cause: error })`.
+
+```ts
+// edge cases que caen en este catch (no son AxiosError pero sí "Error" plñanos):
+//   • REE apiDatos responde 200 OK con `included: []` o sin `included` → throw('Invalid API response…')
+//   • Mongo insertMany falla → mongoose error no-Axios
+//   • Errores de programación (TypeError al procesar JSON) → el throw de TS no es AxiosError
+```
+
+**POR QUÉ**: el mensaje genérico `"Failed to fetch energy data"` original ocultaba la causa real en la consola del frontend. El `onError` de `useEnergyData` solo logueaba `error.message`; ahora el detalle llega hasta Apollo Client.
+
+**Contrato lock-in**: hay un Vitest por path (`fetchData` y `fetchFronteras`), con la firma `expect(promise).rejects.toThrow('Failed to fetch energy data: …')` y `cause: expect.objectContaining({ message: … })`. Si un dev toca solo uno de los dos catch blocks, el otro test lo cacha.
+
+### 3.15 Apollo Client `defaultOptions` eliminados del cliente global
+
+**Decisión** (`frontend/src/libs/apollo-client.ts`): Los `defaultOptions` globales (`watchQuery.errorPolicy: 'ignore'`, `fetchPolicy: 'no-cache'`) han sido eliminados. Los hooks (`useEnergyData`, `useFronteraData`) declaran `errorPolicy: 'all'` localmente. Apollo Client usa sus defaults implícitos (`errorPolicy: 'none'` para `query`, `errorPolicy: 'all'` para `watchQuery`).
+
+**POR QUÉ**: el `'ignore'` global era dead-config — los hooks siempre lo sobreescribían con `'all'`. Un nuevo `useXxxData` que olvidara el override tendría comportamiento inconsistente (`watchQuery` con default `'all'` → consistente; `query` con default `'none'` → rompe). Ahora la regla es: cada hook explicita `errorPolicy: 'all'` (un único lugar canónico por hook, evita que un futuro `useYyyData` se olvide del override).
+
+**POR QUÉ no poner `'all'` global**: la corrección mínima era simplemente dejar los defaults Apollo implícitos. Configurar `defaultOptions` introduce acoplamiento con la decisión de comportamiento que ya está tomada en los hooks.
+
+### 3.16 CORS defaultOrigins ampliado (dev-only) + guard NODE_ENV
+
+**Decisión** (`backend/src/main.ts`):
+- Default en dev (`NODE_ENV !== 'production'`):
+  `'http://localhost:5173,http://localhost:80,http://localhost:3000,https://studio.apollographql.com'`.
+- Default en prod (`NODE_ENV === 'production'`): string vacío.
+
+**POR QUÉ**: cuando devs abren `http://localhost:3000/graphql` en el browser y juegan con Apollo Sandbox, el navegador envía peticiones con `Origin: http://localhost:3000`, que caería fuera del whitelist anterior (5173 + 80) → blocked. Ahora pasa. El origen `https://studio.apollographql.com` queda como forward-compat por si en el futuro se instala `ApolloServerPluginLandingPageProductionDefault`.
+
+**POR QUÉ el guard NODE_ENV**: previene que el default dev (incluyendo localhost utiity origins) se aplique accidentalmente en producción cuando alguien olvidó setear `CORS_ORIGINS`. Caveat: el guard es **best-effort** — sólo dispara cuando el operador setea `NODE_ENV=production` explícitamente (systemd/PM2/Docker no lo hacen por default). Refinar con ConfigSchema validation es un TODO §6 futuro.
+
+> ⚠️ La rama `if (!origin) return cb(null,true)` de la sección §3.8 sigue activa — esa sí es deuda PROD real independiente del defaultOrigins.
+
+### 3.17 Vitest mock-setup lesson × `firstValueFrom` + `throwError`
+
+**Lesson** (de la sesión actual, después de un rabbit hole de 6 iteraciones):
+
+Cuando un test mockea `HttpService.get` con `vi.fn().mockReturnValue(throwError(() => ...))` y se llama a `service.fetchData()` que internamente usa `firstValueFrom(httpService.get(...))`:
+
+SI el test falla con `expected message "X" but got "Failed to fetch ...: Cannot read properties of undefined (reading 'subscribe')"`,
+
+**el problema casi seguro es que `httpGet.mockReturnValue(...)` no está seteado dentro del `it()` body**.
+
+Diagnóstico:
+- `vi.fn()` por default devuelve `undefined`.
+- `firstValueFrom(undefined)` → rxjs internals hacen `undefined.subscribe(...)` → `TypeError: Cannot read properties of undefined (reading 'subscribe')`.
+- Nuestro catch lo envuelve en `InternalServerErrorException('Failed to fetch energy data: Cannot read properties of undefined...')`.
+
+```ts
+// ⛔ Olvidar esto dentro del it() body → mock devuelve undefined
+it('...', async () => {
+  await expect(service.fetchData(...)).rejects.toMatchObject({ ... });
+});
+
+// ✅ Siempre que se reescriba un test así, preservar la setup del mock
+it('...', async () => {
+  httpGet.mockReturnValue(throwError(() => new Error('ree-flow-down')));
+  await expect(service.fetchData(...)).rejects.toMatchObject({ ... });
+});
+```
+
+**Aplicar regla duradera**: cuando refactorices un test que mockee observables de rxjs, copia las setup lines verbáticamente — no las consideres "setup boilerplate" digno de borrar. La línea `mockReturnValue(throwError(...))` no es ruido.
+
 ---
 
 ## 4. Convenciones del Proyecto
@@ -286,6 +375,7 @@ const [selectedGroup, setSelectedGroup] = useState<EnergyGroupId | ''>('');
 - ⛔ **NO usar `console.debug(...)` en componentes React 19 + Vite SWC** — riesgo de `Converting circular structure to JSON` (ver conversiones previas en storage-balance.tsx).
 - ⛔ **Apollo CORS handler No-Origin branch** debe ser revisado ANTES de cualquier deploy a internet.
 - ⛔ **`backend/.env.example` debe ser la única fuente de verdad** de env vars — NO añadir vars "libres" en código sin documentarlas aquí también.
+- ⛔ **NUNCA escribir `onClick={apolloRefetch}` (ni con Apollo ni con react-query)** — el SyntheticEvent entraría como `variables`. SIEMPRE `onClick={() => apolloRefetch()}`. Ver §3.13.
 
 ---
 

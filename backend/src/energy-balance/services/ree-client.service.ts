@@ -71,8 +71,21 @@ export class ReeClientService {
         );
       }
 
-      this.logger.error(`REE => Unexpected error: ${error.message}`);
-      throw new InternalServerErrorException('Failed to fetch energy data');
+      // Log NO-AxiosError: incluye stack para diagnóstico. REE apiDatos
+      // responde 200 OK incluso en errores lógicos (included ausente,
+      // dataset vacío, fechas futuras), por lo que `instanceof AxiosError`
+      // es `false` y caemos aquí. Propagamos el mensaje original para
+      // que el `onError` de Apollo lo muestre tal cual en consola del
+      // frontend, en lugar del "Failed to fetch energy data" genérico.
+      const detail = error?.message || 'non-Axios error in ree-client';
+      this.logger.error(
+        `REE => Unexpected error: ${detail}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw new InternalServerErrorException(
+        `Failed to fetch energy data: ${detail}`,
+        { cause: error },
+      );
     }
   }
 
@@ -130,8 +143,17 @@ export class ReeClientService {
         );
       }
 
-      this.logger.error(`Frontera => Unexpected error: ${error.message}`);
-      throw new InternalServerErrorException('Failed to fetch energy data');
+      // Simétrico a `fetchData`: propaga el mensaje real del error y deja
+      // el stack en el log para diagnóstico.
+      const detail = error?.message || 'non-Axios error in ree-client';
+      this.logger.error(
+        `Frontera => Unexpected error: ${detail}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      throw new InternalServerErrorException(
+        `Failed to fetch energy data: ${detail}`,
+        { cause: error },
+      );
     }
   }
 }
