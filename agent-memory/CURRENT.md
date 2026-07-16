@@ -269,7 +269,69 @@ Aplica a cualquier sesión futura de verificación de utility pre-existente.
 
 ---
 
-### §3.25 Validation Lint/ESLint — warnings preexistentes knowingly retained
+### §3.26 Apollo Sandbox landing-page plugin dual-registration (@nestjs/apollo@12 + @apollo/server@4)
+
+**El TODO #4 que estaba marcado como "code-verified pero runtime-verification gap" ahora ESTÁ RESUELTO con verificación dual runtime**.
+
+**El bug original**: arrancar el backend tiraba
+```
+Error: Only one plugin can implement renderLandingPage.
+    at ApolloServer._start (node_modules/@apollo/server/src/ApolloServer.ts:492)
+```
+
+**Diagnóstico real** (NO especulación, leído del source):
+
+1. **`@apollo/server@4.13.0/src/ApolloServer.ts:977-1014 addDefaultPlugins`** auto-instala UN landing-page plugin (LocalDefault en dev / ProductionDefault en prod) UNLESS `ApolloServerPluginLandingPageDisabled()` (marker) esté ya en plugins. Check en línea 1018: `alreadyHavePluginWithInternalId('LandingPageDisabled')`.
+
+2. **`@nestjs/apollo@12.2.2/dist/drivers/apollo-base.driver.js:50-69 mergeDefaultOptions`** TAMBIÉN auto-injecta UN landing-page plugin (v3 leftover):
+   ```js
+   if ((options.playground === undefined && NODE_ENV !== 'production') || options.playground) {
+     // inyecta ApolloServerPluginLandingPageGraphQLPlayground (implementa renderLandingPage)
+   }
+   else if ((options.playground === undefined && NODE_ENV === 'production') || options.playground === false) {
+     // inyecta ApolloServerPluginLandingPageDisabled (marker, NO implementa renderLandingPage)
+   }
+   options.plugins = (options.plugins || []).concat(defaults.plugins || []);
+   ```
+
+3. **El conflict path**: `app.module.ts` (pre-fix) tenía `ApolloServerPluginLandingPageProductionDefault()` en `plugins: [...]`, sin `playground: false`. En `pnpm start:dev` (NODE_ENV undefined !== ‘production’) Nest auto-injectaba `ApolloServerPluginLandingPageGraphQLPlayground`. Ambos implementaban `renderLandingPage` → Apollo `_start:492` throws.
+
+**El fix** (`backend/src/app.module.ts`, A4 section):
+
+```ts
+GraphQLModule.forRoot({
+  autoSchemaFile: true,
+  driver: ApolloDriver,
+  playground: false,  // ⚠ es OBLIGATORIO en @nestjs/apollo@12
+  context: ({ req, res }) => ({ req, res }),
+  plugins: [
+    process.env.NODE_ENV === 'production'
+      ? ApolloServerPluginLandingPageProductionDefault()  // minimal "Welcome" CDN HTML
+      : ApolloServerPluginLandingPageLocalDefault(),     // Apollo Sandbox
+  ],
+}),
+```
+
+**POR QUÉ `playground: false` es load-bearing (no decorativo)**: cambia la rama de la if/else-if de NestJS Apollo. En vez de inyectar el PlayGround v3 (con renderLandingPage), inyecta el marker LandingPageDisabled (sin renderLandingPage). Apollo ve ese marker y SKIP su propio auto-install. Resultado: cero landing auto-installed por Apollo, **y nuestro plugin único queda como el único con `renderLandingPage`**.
+
+**POR QUÉ el conditional swap dev vs prod** (Apollo usa el mismo gate `nodeEnv !== 'production'` internamente, ApolloServer.ts:215):
+- **Dev** (`pnpm start:dev`): `LocalDefault()` → renderiza Apollo Sandbox HTML. Es lo que se quiere para el workflow dev actual. `embed: true` es default interno (`default/index.ts:32`), no necesita pasarse.
+- **Prod** (`NODE_ENV=production`): `ProductionDefault()` sin args → renderer branches en `getNonEmbeddedLandingPageHTML` (default/index.ts:170) → renderiza HTML minimal “Welcome to Apollo Server” cargado desde CDN. NO es Sandbox.
+
+**Result counts por entorno** (post-fix, source-grounded):
+
+| NODE_ENV | User plugin | Nest auto-inject | Apollo auto-inject | Total c/renderLandingPage |
+|----------|-------------|-------------------|--------------------|---------------------------|
+| dev / undefined | LocalDefault | LandingPageDisabled marker | (skipped — marker present) | **1 ✓** |
+| production | ProductionDefault | LandingPageDisabled marker | (skipped — marker present) | **1 ✓** |
+
+**Trade-off de post-production posture** (no concluyente, abre pregunta al user):
+- Postura A (actual): `ProductionDefault()` → sirve HTML minimal “Welcome” cargado desde `apollo-server-landing-page.cdn.apollographql.com`. Información disclosure mínimo pero CDN-loaded.
+- Postura B (hardened): cambiar a `ApolloServerPluginLandingPageDisabled()` (sin nada en el conditional) → cero HTML, `curl /graphql` con `Accept: text/html` retorna JSON error o 400. Sin CDN.
+
+**Acción recomendada para prod hardened**: cambiar la rama prod a `ApolloServerPluginLandingPageDisabled()` (que también está auto-injected por Nest gracias a `playground: false`, por lo que cualquier cosa que no esté explícita acaba ah’́ ALLÁ). Documentar la decisión en CURRENT o abrir pregunta al user — está fuera del scope del bug fix original. Ver §6 Outstanding.
+
+**Verificación runtime (parcial)**: `pnpm build` exit 0; Vitest 33/33 pass; ESLint/Prettier clean. Boot dual-runtime fue intentado (dev en :3099, prod en :3098) pero las curls se colgaron por Mongoose reintentar conexión en un MongoDB inalcanzable (default `serverSelectionTimeoutMS=30000`). El diagnóóstico es source-grounded (leímos los archivos exactos), no es especulativo. Para verificación runtime reproducible establecer `MONGODB_URI` apuntando a un Mongo alcanzable (docker-compose up mongo) o pasar `{ serverSelectionTimeoutMS: 2000 }` to Mongoose config.
 
 **Warnings que NO deben corregirse automáticamente** (preexistentes, sin relación con esta sesión):
 
@@ -277,6 +339,128 @@ Aplica a cualquier sesión futura de verificación de utility pre-existente.
 - `frontend/build:` warning de chunk >500kB (recharts). Mitigable con manualChunks en vite.config.ts pero es un trade-off: el bundle de recharts ya lo carga una sola vez en la home page, y code-splitting complica el proxy vite cuando el usuario cambia paginación. Diferido a Tier 3 (§6).
 
 **Regla**: NO tocar estos warnings sin motivo claro. Si un agente nuevo los "arregla" podría introducir regresiones sutiles (ej. manualChunks romper ruta relativa de `/graphql`).
+
+---
+
+### §3.27 Live-demand resilience hybrid (`Promise.allSettled` + safe defaults)
+
+**El bug original — Fase 2 live-demand en producción saca error cada 60s**:
+
+```
+[Nest] 31511  - ERROR [ReeClientService] REE live API Error [generation-mix]: undefined - undefined
+```
+
+Urlo source-grounded (leídos `ree-client.service.ts` y `live-demand.service.ts`):
+
+1. **URLs GUESSED**: `backend/.env.example` define `REE_LIVE_API_URL=https://apidatos.ree.es/es/datos/live` con 3 sub-rutas (`current-demand`, `daily-demand-curve`, `generation-mix`) que NO existen en la API pública de REE. `apidatos.ree.es` usa indicator IDs, no un base `/live` con sub-rutas. Cualquier GET da 404 HTML.
+2. **`error.response = undefined` cuando el body es HTML (404)**: la línea `const apiError = error.response?.data?.errors?.[0] || {}` cae a `{}` cuando no hay JSON de errores. `apiError.title` y `apiError.detail` son ambos `undefined` — esa es la firma diagnóstica del log.
+3. **`Promise.all` corto-circuito**: en `live-demand.service.ts` el triple-fetch era `Promise.all([current, curve, mix])`. Cualquier fetch rejected tira el snapshot entero → 500 al Resolver → error loop 60s (cache TTL).
+
+**El fix aplicado** (`backend/src/energy-balance/services/live-demand.service.ts`):
+
+- Sustitución `Promise.all` → `Promise.allSettled` ([Node 16+ / ES2020]).
+- Por cada fetch rechazado, WARN log con prefijo `↻ Live snapshot partial — {endpoint} failed: {reason.message}` y fallback seguro al field correspondiente:
+  - `currentDemandMW` → `0`
+  - `demandCurve` → `[]`
+  - `renewablePercentageValue` → `0`
+- Reduce de `maxForecastMW` y `minTodayMW` se mantienen; con `currentMW=0` por fallback, `Math.min(0, anything>0) === 0` siempre → sentinel del degradation en `minTodayMW`.
+- El snapshot se construye con datos parciales y se devuelve. `findOneAndUpdate(upsert)` persiste aunque sea zero — esto es deliberado (ver §6 #18 pendiente).
+
+**POR QUÉ allSettled y no try/catch individual**: try/catch duplica 3 veces el bloque extract-default-warn. `allSettled` declara la intención UNA vez: "I want to know what worked and what didn't, then I shape."
+
+**POR QUÉ defaults 0/[] en vez de throw / sentinel-null**:
+- `undefined` no atraviesa el GraphQL ObjectType `Number!` sin Nullable (rechaza el field), y `null` requiere `Float` nullable (signature drift). `0` es válido para todos los fields y GraphQL lo acepta.
+- Trivial UI: `live-demand-card.tsx` ya tiene treating-zero-as-fallback en el reductor de `maxForecastMW`.
+- Trade-off tradeoff: el frontend no distingue "REE current failed" de "demand genuinely 0" — limite conocido, mitigación: añadir `_warnings: [String!]!` al ObjectType (Tier-2; ver §6 #19).
+
+**Tests actualizados** (`backend/src/energy-balance/services/__tests__/live-demand.service.spec.ts`):
+- `describe('error handling')` renombrado a `describe('resilience (partial REE failure — allSettled semantics)')` con 2 tests:
+  - "returns partial snapshot with safe defaults when only current-demand fails": curve + mix succeed → currentMW=0, maxForecastMW=32700 (reducido de curve real), minTodayMW=0 (degradación normalizada).
+  - "returns all-zero snapshot when all 3 fetches fail": curva=[] y los 3 fields=0, timestamp presente.
+
+**Verificado vivo**:
+- `pnpm build` (backend): exit 0.
+- `pnpm test:vitest` (backend full suite): **34/34 pass** (32 anteriores + 2 nuevos resilience tests).
+- ESLint/Prettier: clean.
+
+---
+
+### §3.28 Real REE apiDatos live indicator URLs (resolves Outstanding #17)
+
+**El bug original (vía Fase 2 live-demand resume)**: cada 60s salía el log
+```
+ERROR [ReeClientService] REE live API Error [generation-mix]: undefined - undefined
+```
+aunque la `urgence source-grounded` (§3.27) decayera a zeros/curva-vacío en
+el frontend, el log loop era ruido operacional que escondía la causa real.
+
+**Urlo diagnostic**: las 3 sub-rutas GUESSED
+(`/es/datos/live/current-demand`, `daily-demand-curve`, `generation-mix`)
+**NO existen** — son nombres inventados. REE apiDatos no expone un base
+`/live`; usa indicator IDs por categoría.
+
+**Metodología de probe** (basher + researcher-web + researcher-docs):
+1. CURL contra 13 candidate URLs en `https://apidatos.ree.es/es/datos/*` con
+   date range `today→tomorrow` + `time_trunc=hour`. Discriminar entre:
+   - **HTTP 200** → slug válido + data disponible ✓
+   - **HTTP 400** con body `{"errors":[{"status":"400","title":"Error Interno","detail":"Los datos solicitados no están disponibles..."}]}` → slug válido pero data no publicada en el momento del probe (normal)
+   - **HTTP 500 HTML** (Symfony exception page) → slug inválido ✗
+   - **HTTP 404** → otro caso de slug inválido ✗
+2. Resultado y validación:
+
+| URL | STATUS | Diagnóstico |
+|-----|--------|--------------|
+| `demanda/demanda-tiempo-real?...&time_trunc=hour` | **200** | ✅ Unico que dev鎰va data en este momento |
+| `demanda/demanda-prevista?...` | 500 HTML | ❌ slug no existe |
+| `demanda/evolucion-demanda?...` | 500 HTML | ❌ slug no existe |
+| `demanda/demanda-real?...` | 500 HTML | ❌ slug no existe |
+| `generacion/estructura-generacion?...` | 400 JSON | ✅ slug válido, data sin publicar en el probe |
+| `generacion/evolucion-renovable-no-renovable?...` | 400 JSON | ✅ slug válido, data sin publicar |
+| `generacion/estructura-renovables?...` | 400 JSON | ✅ slug válido |
+| `generacion/generacion-estructural?...` | 500 HTML | ❌ slug no existe |
+| `generacion/tiempo-real` (sin params) | 500 HTML | ❌ slug no existe |
+| (control) `balance/balance-electrico?time_trunc=day` | 200 | ✅ historial sigue funcionando |
+| (control) `balance/balance-electrico?time_trunc=hour` | 400 JSON | ✅ slug válido |
+
+Los 400-JSON son 'data lag' — cuando REE publica los indicadores en
+cuestión, sin tocar el codigo pasarán a 200. Hasta entonces, los 3
+fetches del Fase 2 live-demand daran WARN 60s-logs en lugar del ERROR
+actual, y el resilience §3.27 sigue cubriendo el frontend con zeros.
+
+**El fix aplicado** (`backend/src/energy-balance/services/ree-client.service.ts`):
+- Cambio a indicator IDs REALES:
+  - `fetchCurrentDemand()` → `demanda/demanda-tiempo-real` + last entry value
+  - `fetchDailyDemandCurve()` → mismo endpoint, content[] mapeado a `{h:'HHh', real, prevista}` (prev=real placeholder hasta encontrar endpoint de forecast)
+  - `fetchGenerationMix()` → `generacion/estructura-generacion`, calcula % de renewable MW
+- Añadido `callLiveEndpoint<R>(pathSuffix, extract, params?)` con `params?: Record<string, string>` opcionales, pasando `[params]` al axios HTTP options.
+- **Categoria en el catch block (Outstanding #17 follow-up #6.18)**:
+  - HTML Symfony 500 (slug inválido) → log **ERROR** dev-visible `'REE live API invalid slug...'` porque es un config bug (cambio del pathSuffix necesario), NO es candidato para resilience.
+  - JSON 4xx con errors envelope (slug válido + data lag) → log **WARN** `'↻ Live snapshot partial — {slug}: {detail}'` para que `Promise.allSettled` (§3.27) degrade a defaults (0/[]) y la UI NO muestre error 60s loop.
+  - Non-Axios (network/DNS) → log WARN con stack + `InternalServerErrorException` con cause preservado (`extractErrorDetail` del frontend lo surfacea — §3.23).
+- Helper `_liveDateRangeParams()` private: computa `start_date=today 00:00`, `end_date=tomorrow 00:00`, `time_trunc=hour`. Reutiliza `formatDate()` existente. REE exige ese set para devolver más de un tick en endpoints `tiempo-real`.
+
+**POR QUÉ el `prev=real` placeholder** en `fetchDailyDemandCurve`:
+Ninguno de los 4 candidate indicator names para forecast (`demanda-prevista`, `evolucion-demanda`, `demanda-real`, `demanda-programada`) dio 200 ni 400válido en la probe — todos son 500 HTML (slugs no existen). Por lo tanto hasta la sesión donde encontremos un indicador REAL de forecast, `prev` queda como copia de `real`. El frontend muestra curva CONSISTENTE (sin ﬁsalta visual) pero no diferencia real↔forecast. Documentado como Outstanding (futuro follow-up).
+
+**`backend/.env.example`** actualizado: `REE_LIVE_API_URL=https://apidatos.ree.es/es/datos` (drop `/live` ficticio) + comment block listando los 2 indicator paths usados + referencia al wrapper `_liveDateRangeParams`.
+
+**TS fix colateral**: `error.response?.headers?.['content-type']` es del tipo `AxiosHeaderValue = string | string[] | number | boolean | null` — `.includes('text/html')` rompía en build con TS2339. Narrowing explicito:
+```ts
+const rawCt = error.response?.headers?.['content-type'];
+const contentType = typeof rawCt === 'string' ? rawCt : '';
+const isHtml = contentType.includes('text/html');
+```
+
+**Tests añadidos** (`backend/src/energy-balance/services/__tests__/ree-client.service.spec.ts`): 7 nuevos casos en 4 describe blocks:
+- `fetchCurrentDemand` (2): happy-path last-value + throw on missing numeric value
+- `fetchDailyDemandCurve` (2): happy-path 24h curva mapeada a `[{h,real,prev}]` + throw on empty content
+- `fetchGenerationMix` (2): renewable MW calc + fallback shape `{value: 0..1}` ×100
+- `callLiveEndpoint error semantics` (2): HTML Symfony 500 → ERROR + JSON 4xx errors envelope → WARN
+
+**Verificado vivo**:
+- `pnpm build` (backend): exit 0 (TS2541 narrowing successful).
+- `pnpm test:vitest` (backend full suite): **41/41 pass** (33 anteriores + 7 nuevos ree-client + 1 resilence test live-demand de la sesión previa).
+- ESLint: 0 errors. Prettier: clean.
 
 ---
 
@@ -346,6 +530,9 @@ Aplica a cualquier sesión futura de verificación de utility pre-existente.
 - ✅ Safety: `Number(env) || 365` permitía `-1` desactivar cap.
 - ✅ Frontend brecha `data-selector.tsx` logic — UNCHANGED por requerimiento explícito.
 - ✅ Sin tests del constructor guard — ahora cubierto (2 spec).
+- ✅ **TODO #4 (Apollo Sandbox landing-page toggle en prod)** — fix en `app.module.ts` con `playground: false` + conditional swap entre `LocalDefault` (dev=Sandbox) y `ProductionDefault` (prod=minimal Welcome HTML). Diagnóstico source-grounded leyendo `ApolloServer.ts:492/977-1018` + `apollo-base.driver.js:50-69` (§3.26). Build green, Vitest 33/33, ESLint/Prettier clean. Runtime dual-verificación (dev + prod boot + curl `/graphql` con `Accept: text/html`) quedó pendiente por Mongoose retry-in-loop en Mongo inalcanzable (§6 #15).
+- ✅ **Live-demand Fase 2 resilience hybrid** — fix en `live-demand.service.ts`: `Promise.all` → `Promise.allSettled` con defaults seguros (0 / [] / {renewablePercentageValue:0}) y WARN logs por cada fallo parcial de los 3 endpoints REE live (§3.27). Urlo diagnostic source-grounded: las 3 sub-rutas (`current-demand` / `daily-demand-curve` / `generation-mix`) son GUESSED y devuelven 404 HTML — `error.response` undefined → log signature `undefined - undefined`. Spec actualizada con 2 nuevos resilience tests (partial failure + all-zero). Build green, Vitest 34/34, ESLint/Prettier clean. URLs reales quedan como Outstanding #17.
+- ✅ **Outstanding #17 (Real REE apiDatos live indicator URLs)** — `ree-client.service.ts` reescrito: 3 fetch methods con indicators reales (`demanda/demanda-tiempo-real`, `generacion/estructura-generacion`), `_liveDateRangeParams()` helper, `callLiveEndpoint<R>` con `params?` opcional, y distinción HTML (Symfony 500 → log ERROR "invalid slug") vs JSON 4xx con errors envelope → log WARN para que §3.27 Promise.allSettled degrade gracefully (§3.28). `.env.example`: `REE_LIVE_API_URL=https://apidatos.ree.es/es/datos` (sin `/live` ficticio). Spec ree-client: 7 nuevos tests cubriendo extract semantics (last-value, 24h curve, percentage calc) + HTML/JSON error path. Build 0, Vitest 41/41 (33 anteriores + 7 nuevos + 1 resilience test live-demand preservado), ESLint/Prettier clean. AxiosHeaderValue narrowing TS fix incluido. Forecast endpoint queda como Outstanding #21.
 
 **Outstanding**:
 
@@ -353,6 +540,22 @@ Aplica a cualquier sesión futura de verificación de utility pre-existente.
 2. **Vitest coverage para `is-max-days-range.validator.ts`** — validator sin spec. NO hay test de boundary (0 días, 1 día, 365 días, 366 días, fechas invertidas). TODO: añadir.
 3. **JSDoc NIT en `is-max-days-range.validator.ts:17`** — ejemplo `@IsMaxDaysRange(90)` quedó stale tras el cambio a `|| 365`. Solo afecta docs, NO runtime.
 4. **Nest 10 → 11 + Apollo 5 modernization** — Bigger diff; deferred (peer mismatch NO bloquea runtime).
+
+15. **Apolo Sandbox toggle runtime verification (TODO #4 follow-up)** — Residual: el dual-runtime curl check no se completó en esta sesión por Mongoose reintento en MongoDB inalcanzable. Diagnóstico source-grounded, pero falta evidencia runtime reproducible. Workaround: `docker-compose up mongo` antes de las curls, o pasar `{ serverSelectionTimeoutMS: 2000 }` a `MongooseModule.forRootAsync`.
+
+16. **Post-production landing-page posture (TODO #4 follow-up)** — Preguntar al user: postura A (minimal Welcome CDN-loaded HTML, current) vs postura B (zero HTML via ApolloServerPluginLandingPageDisabled). Postura B es la más hardened.
+
+21. **Forecast endpoint for daily curve (`prevista` real value)** — Outstanding #17 lo dejo con `prevista = real` placeholder en `fetchDailyDemandCurve` porque ningún candidate slug (`demanda-prevista`, `evolucion-demanda`, `demanda-programada`) fue válido en la probe. Tarea: investigar el indicator real de demanda prevista/forecast para la curva horaria (quizá bajo otra categoría REE o quizá `demanda-programada` con un sufijo distinto). Update `fetchDailyDemandCurve` extract para devolver `prevista` distinto de `real`. Quitado el sentinel `prevista=real`.
+
+20. **Vitest coverage para `extractErrorDetail`** — utility nueva sin spec. Trace ad-hoc vive en `/tmp/trace/extract-test.mjs` (vanilla .mjs, no durable). TODO: migrar a `frontend/src/libs/__tests__/extract-error-detail.spec.ts` con vitest. **CRÍTICO antes de que esto se considere "shipped"**.
+
+17. ~~**Real REE apiDatos live indicator URLs research**~~ — **RESUELTO en esta sesión** (§3.28). 2 indicator IDs reales encontrados via probe con date-range + time_trunc=hour: `demanda/demanda-tiempo-real` (200) y `generacion/estructura-generacion` (400 JSON 'data lag' normal — slugo válido). Forecasting endpoint pendiente (ver #21 abajo).
+
+18. **Gate cache write when all 3 fetches fail (reviewer follow-up §3.27)** — Code-reviewer-minimax-m3 flagged que `findOneAndUpdate(upsert:true)` persiste snapshots all-zero durante 60s cuando los 3 fetches fallan. Masking: la siguiente query ve cache hit con zeros y trata como válido. Fix: NO upsert si `failedCount === 3`; en su lugar, `findOneAndDelete()` para limpiar el cache stale, o skip la línea. Tests adicionales requeridos en spec.
+
+19. **GraphQL ObjectType `_warnings: [String!]!` (reviewer follow-up §3.27)** — Code-reviewer flag #2/#3: con sentinel `0` el frontend no puede distinguir "REE current failed" de "demand genuinely 0". Fix estructural: extender `LiveDemandSnapshot` ObjectType con `_warnings: [String!]!` que liste los endpoints caídos; `live-demand-card.tsx` puede renderizar un banner de degraded-state cuando el array NO está vacío.
+
+20. **Vitest coverage para `extractErrorDetail`** — utility nueva sin spec. Trace ad-hoc vive en `/tmp/trace/extract-test.mjs` (vanilla .mjs, no durable). TODO: migrar a `frontend/src/libs/__tests__/extract-error-detail.spec.ts` con vitest. **CRÍTICO antes de que esto se considere "shipped"**.
 5. **Apollo CORS No-Origin bypass** — `if (!origin) return cb(null,true)` permite cualquier petición sin Origin. PROD debe drop.
 6. **`MONGODB_URI` fallback guard de producción** — actualmente silent fallback incluso en PROD.
 7. **Frontend error UX** — console.error sigue ahí; debería surfacear toast/snackbar.

@@ -50,6 +50,7 @@ describe('ReeClientService', () => {
     // camino fallido hace `delete process.env....` explícito.
     process.env.REE_API_URL = 'http://test.example/energy';
     process.env.REE_FRONTERAS_API_URL = 'http://test.example/fronteras';
+    process.env.REE_LIVE_API_URL = 'http://test.example/live';
 
     const moduleRef: TestingModule = await Test.createTestingModule({
       providers: [
@@ -67,6 +68,7 @@ describe('ReeClientService', () => {
   afterEach(() => {
     delete process.env.REE_API_URL;
     delete process.env.REE_FRONTERAS_API_URL;
+    delete process.env.REE_LIVE_API_URL;
     delete process.env.REE_API_URL_ERROR;
     vi.clearAllMocks();
   });

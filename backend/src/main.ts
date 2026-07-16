@@ -31,9 +31,11 @@ async function bootstrap() {
   // nada extra, pero un dev que manualmente abra `http://localhost:3000/graphql`
   // desde el navegador dispara peticiones con `Origin: http://localhost:3000`,
   // por lo que lo añadimos para que funcione en inspección manual.
-  // `https://studio.apollographql.com` está pensado para cuando se use el
-  // plugin `ApolloServerPluginLandingPageProductionDefault` (no instalado
-  // todavía en este repo, pero forward-compatibilidad no cuesta nada).
+  // `https://studio.apollographql.com` queda en la allowlist porque Apollo
+  // Studio (cloud-hosted inspector) sigue siendo utilizable con el plugin
+  // `ApolloServerPluginLandingPageProductionDefault` instalado en
+  // `app.module.ts` — ese plugin apaga la Sandbox local self-hosted en
+  // producción pero NO bloquea conexiones externas desde Apollo Studio.
   // Usamos `||` (no `??`) para que un valor vacío o solo-whitespace caiga al default;
   // un `CORS_ORIGINS=""` mal seteado no debe terminar bloqueando toda petición.
   //

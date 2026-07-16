@@ -8,13 +8,23 @@ import {
  * Validador que comprueba que la diferencia entre `startDate` y la propiedad
  * decorada (por defecto `endDate`) esté dentro de un máximo de días.
  *
+ * Los DTOs consumidores (p.ej. `EnergyBalanceInput`, `FronteraInput`) suelen
+ * importar el cap desde su `dto.constants.ts` en vez de pasar un número
+ * literal, para evitar duplicación cross-DTO y para honrar la env var
+ * `MAX_DATE_RANGE_DAYS`. El validator en sí es stateless: cualquier número
+ * positivo funciona como cap.
+ *
+ * El cálculo de diff asume strings ISO `YYYY-MM-DD`, parseadas por
+ * `new Date(str)` como UTC midnight. Por eso los diffs enteros de días
+ * son exactos independientemente de la zona horaria del runtime.
+ *
  * @example
  *   class RangeDto {
  *     @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/)
  *     startDate: string;
  *
  *     @IsString() @Matches(/^\d{4}-\d{2}-\d{2}$/)
- *     @IsMaxDaysRange(90)
+ *     @IsMaxDaysRange(365)        // en DTOs reales: MAX_DATE_RANGE_DAYS
  *     endDate: string;
  *   }
  */

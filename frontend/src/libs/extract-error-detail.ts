@@ -37,9 +37,13 @@
  *
  * Referencia: investigación bug A + bug B — propuesta §1.2 + §2.3.
  */
-type ApolloLikeError = {
+export type ApolloLikeError = {
   message?: string;
-  graphQLErrors?: Array<{
+  // `ReadonlyArray` para coincidir con `ApolloError.graphQLErrors:
+  // readonly GraphQLFormattedError[]` (Apollo v3 native). Sin readonly,
+  // TypeScript rechaza pasar `ApolloError` directo a `extractErrorDetail`
+  // (los consumidores del hook LiveDemand usan `ApolloError as`).
+  graphQLErrors?: ReadonlyArray<{
     message?: string;
     extensions?: {
       originalError?: {
@@ -53,16 +57,22 @@ type ApolloLikeError = {
   networkError?: { message?: string } | null;
 };
 
-export function extractErrorDetail(error: ApolloLikeError | null | undefined): string {
+export function extractErrorDetail(
+  error: ApolloLikeError | null | undefined,
+): string {
   const gqe = error?.graphQLErrors?.[0];
   const original = gqe?.extensions?.originalError?.message;
 
   // 1a — array
-  if (Array.isArray(original) && original.length > 0 && typeof original[0] === 'string') {
+  if (
+    Array.isArray(original) &&
+    original.length > 0 &&
+    typeof original[0] === "string"
+  ) {
     return original[0];
   }
   // 1b — string
-  if (typeof original === 'string' && original.length > 0) {
+  if (typeof original === "string" && original.length > 0) {
     return original;
   }
   // 2 — GraphQL syntax error / unwrapped message
@@ -83,14 +93,14 @@ export function extractErrorDetail(error: ApolloLikeError | null | undefined): s
   if (
     (!error?.graphQLErrors || error.graphQLErrors.length === 0) &&
     error?.networkError &&
-    (error?.message === 'Network Error' || error?.message === 'Failed to fetch')
+    (error?.message === "Network Error" || error?.message === "Failed to fetch")
   ) {
-    return 'No se pudo conectar con el servidor backend. Verifica que el proceso esté en ejecución (los detalles del fallo aparecen en la consola del backend).';
+    return "No se pudo conectar con el servidor backend. Verifica que el proceso esté en ejecución (los detalles del fallo aparecen en la consola del backend).";
   }
   // 4 — fallback genérico (incluye ServerError / timeout)
   if (error?.message) {
     return error.message;
   }
   // 5 — último recurso
-  return 'Error desconocido';
+  return "Error desconocido";
 }

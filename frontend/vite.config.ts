@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react-swc'
 import tailwindcss from '@tailwindcss/vite'
 
@@ -51,6 +51,27 @@ export default defineConfig({
           })
         },
       },
+    },
+  },
+  // Vitest config — Vitest auto-detects a `test` block here, no need
+  // for a separate vitest.config.ts file. Excluded files match the
+  // backend convention (§vitest.config.ts) so coverage stays consistent.
+  test: {
+    include: ['src/**/*.spec.ts'],
+    exclude: ['node_modules', 'dist'],
+    environment: 'node',
+    globals: false,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      include: ['src/**/*.ts'],
+      exclude: [
+        'src/**/*.spec.ts',
+        'src/main.tsx',
+        // `__tests__/` directories are exposed under `include: src/**/*.ts`
+        // via the type narrowing pattern; coverage modules already exclude
+        // spec files; main.tsx excluded because es bootstrap puro sin lógica.
+      ],
     },
   },
 })
