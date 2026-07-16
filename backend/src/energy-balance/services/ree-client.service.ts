@@ -119,11 +119,43 @@ export class ReeClientService {
     }
   }
 
+  /**
+   * TZ-independent formatter para `YYYY-MM-DD HH:MM` (sin offset).
+   *
+   * **POR QUÉ getters locales y NO `date.toISOString()`** (Fix B,
+   * investigación histórico-vacío investigation):
+   *   - La implementación previa usaba `date.toISOString()` que SIEMPRE
+   *     convierte a UTC. En servers no-UTC (e.g. CEST = UTC+2 en
+   *     verano) `new Date('2026-07-15T00:00:00').toISOString()` da
+   *     `2026-07-14T22:00:00.000Z`, lo que:
+   *       (a) adelantaba `start_date` al día anterior en el payload a
+   *           REE, y
+   *       (b) hacía que el `.replace('00:00', '23:59')` quedara
+   *           inerte (la substring `00:00` jamás aparece en la salida
+   *           de `toISOString()` cuando el server está en CEST — siempre
+   *           sale `22:00`/`23:00`), truncando silenciosamente
+   *           `end_date` a mitad del día y haciendo que REE devolviera
+   *           sólo 22-23h en lugar de 24h.
+   *   - Usando `getFullYear/getMonth/getDate` accedemos al día según
+   *     el calendario LOCAL del server. Si el server está en UTC,
+   *     `local == UTC`. Si está en CEST, la medianoche local sigue
+   *     siendo `YYYY-MM-DD 00:00` (no se desfasa). En cualquier TZ,
+   *     `end_date` cierra correctamente a `23:59` del mismo día local.
+   *
+   * **Trade-off explícito**: el contrato "qué día entiende REE" depende
+   * de CÓMO se instanció el Date aguas arriba. Si `live-demand.service`
+   * hace `new Date('2026-07-15T00:00:00')` (sin `Z`), el día resultante
+   * es local 2026-07-15 (independiente del TZ del server). Si el caller
+   * construye `new Date(Date.UTC(2026,6,15))`, el día es UTC 2026-07-15.
+   * Cualquiera de las dos elecciones es TZ-consistente aquí (no se
+   * mezclan sistemas de referencia dentro del mismo request).
+   */
   private formatDate(date: Date, isStart: boolean): string {
-    const isoString = date.toISOString();
-    return isStart
-      ? isoString.replace('T', ' ').substring(0, 16) // 2025-04-20 00:00
-      : isoString.replace('T', ' ').substring(0, 16).replace('00:00', '23:59');
+    const yyyy = date.getFullYear();
+    const MM = String(date.getMonth() + 1).padStart(2, '0');
+    const dd = String(date.getDate()).padStart(2, '0');
+    const hh = isStart ? '00:00' : '23:59';
+    return `${yyyy}-${MM}-${dd} ${hh}`;
   }
 
   async fetchFronteras({ start, end }: { start: Date; end: Date }) {
@@ -307,9 +339,24 @@ export class ReeClientService {
    *   Live requiere «ahora» (today 00:00 → tomorrow 00:00); historical
    *   requiere una fecha pasada concreta (`date 00:00 → date+1 00:00`).
    *   Mezclar las dos signatures haría el código confuso.
+   *
+   * **Fix A (investigación histórico-vacío)**: acepta `dateStr: string`
+   * con el input ORIGINAL `YYYY-MM-DD` del DTO. Era param implícito
+   * ausente — la versión previa derivaba el día del mensaje de error
+   * con `date.toISOString().slice(0,10)` sobre un Date local, lo que en
+   * servers no-UTC mostraba un día diferente al que pidió el usuario y
+   * hacía creer al debugger que el código restaba 1 día. Ahora el
+   * mensaje refleja exactamente lo que el frontend mandó.
+   *
+   * POR QUÉ param nuevo obligatorio (no opcional con fallback):
+   *   Hay un único caller (`LiveDemandService.getHistoricalHourlySnapshot`)
+   *   que TIENE el `date` string original. Pasar el string obligatorio
+   *   hace el contrato explícito y fail-fast si se olvida en un caller
+   *   futuro.
    */
   async fetchHistoricalHourly(
     date: Date,
+    dateStr: string,
     region?: string,
   ): Promise<Array<{ h: string; real: number; prevista: number }>> {
     return this.callLiveEndpoint<
@@ -322,7 +369,7 @@ export class ReeClientService {
         ).flatMap((g: any) => g?.attributes?.content ?? []);
         if (!merged.length) {
           throw new Error(
-            `Invalid historical response: empty content for ${region ?? 'nacional'} on ${date.toISOString().slice(0, 10)}`,
+            `Invalid historical response: empty content for ${region ?? 'nacional'} on ${dateStr}`,
           );
         }
         return merged.map((entry: any) => {
@@ -361,8 +408,12 @@ export class ReeClientService {
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
     const params: Record<string, string> = {
+      // Rango 24h midnight-to-midnight: today 00:00 -> tomorrow 00:00.
+      // `isStart=true` sobre `tomorrow` rinde 'tomorrow 00:00' (que es
+      // semánticamente "fin del día de hoy"). Usar `isStart=false` aquí
+      // produciría 'tomorrow 23:59' = rango de 48h.
       start_date: this.formatDate(today, true),
-      end_date: this.formatDate(tomorrow, false),
+      end_date: this.formatDate(tomorrow, true),
       time_trunc: 'hour',
     };
     if (region) {
@@ -388,11 +439,15 @@ export class ReeClientService {
   ): Record<string, string> {
     const start = new Date(date);
     start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 1);
+    // Importante: codificamos `end_date` reutilizando `start` con
+    // `isStart=false` (= close-of-day a 23:59). Esto evita que
+    // `end.setDate(end.getDate() + 1)` avance el día local — un bug
+    // sutil que en POST-FIX (getters locales en vez de toISOString)
+    // daría un rango de 48h en lugar de 24h, o un end_date de un día
+    // distinto al pedido por el usuario.
     const params: Record<string, string> = {
       start_date: this.formatDate(start, true),
-      end_date: this.formatDate(end, false),
+      end_date: this.formatDate(start, false),
       time_trunc: 'hour',
     };
     if (region) {

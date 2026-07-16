@@ -223,6 +223,7 @@ export class LiveDemandService {
     try {
       const curve = await this.reeClient.fetchHistoricalHourly(
         parsed,
+        date,
         geoLimit ?? undefined,
       );
 

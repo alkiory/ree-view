@@ -692,6 +692,170 @@ const isDegraded =
 
 ---
 
+### §3.32 Phase 2 §3.32 — Mock fallback + race-fix typo + page footer + DRY Records + 4 polish cycles (resilience Tier-2 UX)
+
+**Nota de mudanza (este turn)**: bloque movido desde `§5 Estado Verificado` (línea 753 pre-§3.33 / línea 878 post-§3.33) a su lugar canónico bajo §3, entre §3.31 y §3.33. Número `§3.32` preservado: representa la decisión cronológica original del autor previo y respeta las referencias externas que puedan pinear a este slot por número.
+
+**Decisión** (esta sesión): cuando AMBOS upstream live + historical fallan (cadena entera REE caída), la UI debe mostrar SIEMPRE algo al usuario — datos sintéticos con chip "DEMO" + footer explicativo. Pre-§3.32 la UI mostraba `"Sin curva horaria disponible."` — percibido como error/wrong-state por el usuario cuando en realidad era upstream-down transitorio.
+
+**Mock data source** (`frontend/src/hooks/useLiveDemand.ts`): nueva función sync `buildMockLiveDemand(): LiveDemandData` con `DEMO_CURVE` 24h inline-constante. Plausible demanda española: mínimo 4-5am (~17.5 GW), pico vespertino 20h (~36 GW). `real === prevista` porque el forecast sintético per-region está out-of-scope per §3.31 outstanding #21.
+
+**Race-fix comparison typo (Tier-1 retroactivo)**: `useHistoricalHourly` race-fix pre-§3.32 tenía `historicalHourly.region?.toLowerCase() === (regionSlug ?? "nacional")`. Pero `regionSlug` era TS enum key UPPERCASE (`'NACIONAL'`, `'PENINSULAR'`, ...), mientras backend `regionCacheKey` retorna capitalized string (`"Nacional"`). La comparación `.toLowerCase()` solo aplicaba al LHS; RHS quedaba uppercase → MISMATCH siempre → race-fix deputy broken para regiones ≠ Nacional. **Fix** (single-file): reshape `LiveDemandRegion` enum a kebab-lowercase (`"nacional" | "peninsular" | ...`) + `REGION_DISPLAY_TO_SLUG` mapping. Defense-in-depth `.toLowerCase()` en ambos lados con JSDoc racional (documented retroactivamente para evitar regresión futura del bug).
+
+**Page-level footer attributions** (`frontend/src/App.tsx`): page-level footer agrega dos enlaces de atribución visual conforme demanda del usuario:
+- `Alkiory · https://alkiory.com` (developer/maintainer)
+- `Diseño basado en kit "Full Charts Components" de Frank Esteban Isdray, Figma Community, CC BY 4.0 · https://www.figma.com/@frankuxui`
+
+**4 polish cycles en `frontend/src/components/cards/live-demand-card.tsx`** (code-reviewer-driven, 5 review iterations totales):
+1. **Q1 coherent initial-loading**: pre-§3.32, `deriveMode` retornaba `'live'` cuando `live === undefined` (initial Apollo fetch in flight) → chip "EN VIVO" + body "Sin curva horaria..." UX mismatch. Nuevo `'loading'` Mode dedicado: chip "CARGANDO" + chart loader text-only (coherent visual + a11y `role="status"`).
+2. **DRY pulse animation**: chip-loading usaba `animate-pulse` Tailwind utility. Reemplazo a `.pulse-dot` className (existing `@keyframes pulse-dot` en `index.css:live-chip`).
+3. **Drop redundant chart loader pulse**: 3 indicators concurrentes (chip pulse + chart dot pulse + footer text). Chip solo es suficiente → drop inner chart pulse, keep text only.
+4. **Collapse redundant `loadingLive || live === undefined`**: Apollo v3 acopla `loading: true` ↔ `data: undefined` en normal flow. Eliminado flag `loadingLive` redundante de `deriveMode` signature y `loadingLiveDemand` del hook destructure (estaba unused).
+
+**Mode → maps DRY extraction** (sub-ciclo §3.32 polish, 3 Records nuevas en module scope):
+- `CAPTION_FOR_MODE: Record<Mode, string>` lookup para footer caption text (nested ternary → lookup).
+- `COLOR_FOR_MODE: Record<Mode, string>` lookup para chart stroke + gradient stopColor (4 ternarios duplicados → 1 lookup).
+- `GRADIENT_ID_FOR_MODE: Record<Mode, string>` lookup para gradient fill selector (2 ternarios duplicados → 1 lookup).
+- `Record<Mode, string>` exhaustiveness check: añadir un 5to Mode value se convierte en TS compile error, no silent visual regression.
+
+**Legend revert** (reviewer-driven, §3.32 polish round 4): `COLOR_FOR_MODE` aplicado indistintamente weakeningly: en `historical` mode, ambos legend dot y dashed strip se volvían `C.muted` (same color, sólo dash pattern diferencia). Revert aplicado: legend distingue mock vs non-mock (`mode === "mock" ? C.accentGold : C.live`); chart sigue obedeciendo `COLOR_FOR_MODE`.
+
+**Por qué 3 Records separadas en lugar de 1 mega-`Record<Mode, { text, color, gradientId }>`**: cada Record tiene 1 responsabilidad (caption text / color value / gradient id). El split coincide con existing pattern `REGION_DISPLAY_TO_SLUG` en el mismo archivo. Consolidar a nested MODE_META es un refactor mayor fuera de §3.32.
+
+**Por qué chained inline ternary (NO function-call dispatch) para CO₂ annotation** (round 5 revert): el divider de CO₂ emissions (3-way) NO usa `Record<Mode, ReactNode>` lookup porque los JSX bodies son styling-heavy (`formatDateShort(dateYesterday)` calls embedded, `style={{ marginLeft: 'auto' }}`, multi-segment text). Inline chained ternary es más maintainable para 2-modes annotation cases. Reviewer explícitamente rechazó `renderCo2Annotation()` helper: "function adds ~15 lines for 2 cases that fit a 5-line chained ternary". Lesson durable para futuros casos similares: function-call dispatch solo cuando cases son simple value lookups (como CAPTION/COLOR/GRADIENT_ID); para JSX-heavy bodies, inline wins.
+
+**Validation approach**: `tsc -b` + `eslint` + `prettier --write/check` + `pnpm build` → 6/6 verde. State assertions: `animate-pulse` Referencias removidas, `pulse-dot` className single-source, `loadingLiveDemand` unused dedupe, 3 Records referenciales high, CO₂ inline chained ternary post-revert.
+
+**No regressions**: backend `live-demand.service.ts` Promise.allSettled hybrid (§3.27) no modificado, schema build de `LiveDemandRegionSlug` intacto (§3.31).
+
+---
+
+### §3.33 ReeClientService TZ correctness — historical response error + formatDate
+
+> **Nota de numeración / bitácora de esta turn (final state)**: Esta entrada se introdujo en este turn como §3.33 porque el slot §3.32 estaba entonces ocupado por una entrada misplaced en §5 Estado Verificado (`Mock fallback + race-fix typo…`). En ESTA MISMA TURN se completó la mudanza del bloque §3.32 desde §5 hacia su lugar canónico bajo §3, restaurando su número original. La **renumeración §3.33 → §3.32 que el usuario solicitó explícitamente fue declinada** (decisión `Option B` per §3 del §3.33 sub-spike). Razones: (a) preservar la **identidad cronológica** — la decisión del mock fallback fue conceived e implementada ANTES de la TZ fix, por lo que §3.32 belongs a ese contenido y §3.33 belongs a éste, (b) evitar romper **referencias externas** en `agent-summary.md` o scripts que puedan pinean a §3.32 por contenido (grep por `Mock fallback` o `buildMockLiveDemand`, no por número), (c) **trace audit**: el badge del agente en `git log` mantiene §3.32 + §3.33 como dos commits distintos correspondientes a dos decisiones diferentes. Future agent que aspire a fusionarlas debe primero leer las bitácoras associées antes de actuar.
+
+**Origen**: error GraphQL reproducido con frontend querying `getHistoricalHourlySnapshot(date="2026-07-15", region=NACIONAL)` en server CEST — devolvía `Failed to compute historical snapshot (date=2026-07-15, region=NACIONAL): Invalid historical response: empty content for nacional on 2026-07-14`. La cadena exhibía DOS problemas visibles simultáneamente: (i) el mensaje mencionaba `2026-07-14` aunque el input del DTO era `2026-07-15` (corrimiento UTC), (ii) el `empty content` provenía del upstream REE y no de un bug estructural del cliente.
+
+**Causa raíz CONFIRMADA por investigación con probe directa a REE** (curl `https://apidatos.ree.es/es/datos/demanda/demanda-tiempo-real?start_date=...&end_date=...&time_trunc=hour` fuera de la app, no contra mocks):
+
+- **P1 (causa operativa inmediata)**: REE responde `200 OK` con `included: [4 grupos]` (`Prevista id=2052`, `Programada id=2053`, `Real id=2037`, `Programada total id=2054`) y `content: []` en cada grupo, sin `errors[]` ni `links.next`. La firma diagnóstica es: cuando REE no tiene datos publicados para el rango pedido (e.g., fechas futuras o fuera de la ventana de publicación), responde 200 legítimo con `content` vacío. Esta investigación contrastó 3 URLs distintas y todas devolvieron exactamente este shape. **El bug que el usuario reportó NO tiene fix del lado cliente** — sólo mitigación de legibilidad del mensaje (Fix A) y disambiguación del proxy (httparty, ver §6 Outstanding).
+
+- **P2 (cosmetic / debugging hazard)**: el throw usaba `date.toISOString().slice(0,10)` para extraer el día del mensaje de error. En servers no-UTC (`new Date('2026-07-15T00:00:00')` interpretado en CEST = `'2026-07-14T22:00:00.000Z'` UTC), el slice rendía `2026-07-14`, llevando al debugger a creer que el código restaba 1 día intencionalmente. No era la causa del `empty content` (REE upstream es lo único que lo provoca) pero contaminaba el log con información engañosa.
+
+- **P3 (latente / silencioso)**: el `.replace('00:00', '23:59')` en `formatDate(date, isStart=false)` era **código muerto** en servers no-UTC. La simulación Node confirmó: cuando el server está en CEST, `end.toISOString()` jamás contiene la substring `'00:00'` — siempre rinde `'22:00'` (verano) o `'23:00'` (invierno) UTC. El replace nunca aplicaba, así que `formatDate(end, false)` aterrizaba en `end_date='... 22:00'` (o `'23:00'`). El efecto end-to-end sobre payloads reales de REE **no se sondeó con curl** (el range-truncation en apidatos.ree.es con `end_date='2026-07-XX 22:00'` no se midió contra apidatos.ree.es directamente); matemáticamente consistente con la lógica del código, pero la curva REE truncada resultante es hipótesis no confirmada. Pendiente: smoke test futuro.
+
+**Fix A — mensaje del error refleja el input del DTO verbatim** (`ree-client.service.ts:fetchHistoricalHourly`):
+
+```ts
+// Antes:
+async fetchHistoricalHourly(date: Date, region?: string): Promise<...> {
+  ...
+  throw new Error(
+    `Invalid historical response: empty content for ${region ?? 'nacional'} on ${date.toISOString().slice(0, 10)}`,
+  );
+}
+
+// Después (signature con `dateStr: string` como 2º posicional required):
+async fetchHistoricalHourly(
+  date: Date,
+  dateStr: string,
+  region?: string,
+): Promise<...> {
+  ...
+  throw new Error(
+    `Invalid historical response: empty content for ${region ?? 'nacional'} on ${dateStr}`,
+  );
+}
+```
+
+Caller en `live-demand.service.ts:getHistoricalHourlySnapshot` pasa ahora el `date` string original del DTO como segundo argumento:
+
+```ts
+const curve = await this.reeClient.fetchHistoricalHourly(
+  parsed,
+  date,
+  geoLimit ?? undefined,
+);
+```
+
+**POR QUÉ param nuevo obligatorio (no opcional con fallback)**: el único caller (`LiveDemandService`) tiene el `date` string; pasarlo explícito hace el contrato fail-fast en TS si un caller futuro olvida la firma. Sin surprise silenciosa.
+
+**Fix B — `formatDate` reescrito TZ-independent con getters locales** (`ree-client.service.ts:formatDate`):
+
+```ts
+// Antes (UTC-converting, dead .replace):
+private formatDate(date: Date, isStart: boolean): string {
+  const isoString = date.toISOString();
+  return isStart
+    ? isoString.replace('T', ' ').substring(0, 16)
+    : isoString.replace('T', ' ').substring(0, 16).replace('00:00', '23:59');
+}
+
+// Después (local getters, no UTC-shift, no replace muerto):
+private formatDate(date: Date, isStart: boolean): string {
+  const yyyy = date.getFullYear();
+  const MM = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const hh = isStart ? '00:00' : '23:59';
+  return `${yyyy}-${MM}-${dd} ${hh}`;
+}
+```
+
+**POR QUÉ getters locales y NO `toISOString()`**: con `toISOString()`, un `Date` construido como local midnight en CEST (`new Date('2026-07-15T00:00:00')` interpretado en CEST = `'2026-07-14T22:00:00.000Z'` UTC) rinde `'2026-07-14 22:00:00.000Z'` UTC. El substring da `'2026-07-14 22:00'`, que NO es `'2026-07-15 00:00'`. Con getters locales, el día es lo que el caller construyó como wall-clock (independiente del TZ del server).
+
+**Ajustes cross-method derivados de Fix B** (necesarios para no romper el contrato de los params helpers):
+
+- `_liveDateRangeParams()` (`ree-client.service.ts`): mantiene `tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1)` PERO usa `isStart=true` para `tomorrow` (rinde `'tomorrow 00:00'` = "fin del día de hoy a medianoche", rango 24h midnight-to-midnight). Usar `isStart=false` aquí produciría `'tomorrow 23:59'` (rango de 48h, incorrecto).
+
+- `_historicalHourlyParams()` (`ree-client.service.ts`): elimina el `end = new Date(start); end.setDate(end.getDate() + 1)` del código original. Reusa `start` con `isStart=false` para `end_date` (rinde `'YYYY-MM-DD 23:59'` del MISMO día, close-of-day). Sin este cambio, `end.getDate()+1` avanza el LOCAL day y `formatDate(end, false)` rendiría `'YYYY-MM-DD+1 23:59'` (día siguiente, incorrecto).
+
+**POR QUÉ ambos helpers NO construyen un segundo Date para `end_date`**: el código original PRE-FIX dependía de que `.toISOString()` desfasara el cierre del día, regresando al día anterior o siguiente según offset. POST-FIX con getters locales, ese desfasaje deja de existir; codificar el cierre del día en la MISMA instancia `start` (vía el flag `isStart`) es la expresión más limpia del contrato.
+
+**Tests añadidos** (5 nuevos, distribuidos en 2 archivos):
+
+| # | Archivo | Bloque | Nombre | Cubre |
+|---|---------|--------|--------|-------|
+| A1 | `ree-client.service.spec.ts` | `fetchHistoricalHourly (Fix A + Fix B)` | "error message contains the input dateStr (not UTC-shifted date)" | Mock replica ground-truth de REE con 4 grupos `included` y `content=[]`. El throw contiene `'...on 2026-07-15'` (no `'...on 2026-07-14'`) |
+| A2 | `ree-client.service.spec.ts` | `fetchHistoricalHourly (Fix A + Fix B)` | "maps the hourly REE content to {h, real, prevista} entries" | Happy path con 2 entries `[{datetime:..., value:24000}, ...]` → mappea a `[{h:'00h', real:24000, prevista:24000}, ...]` |
+| B1 | `ree-client.service.spec.ts` | `fetchHistoricalHourly (Fix A + Fix B)` | "uses local getters to format start_date=YYYY-MM-DD 00:00 and end_date=YYYY-MM-DD 23:59" | Asserts hardcoded strings sobre Date local-midnight — cross-TZ runner portable |
+| B2 | `ree-client.service.spec.ts` | `fetchHistoricalHourly (Fix A + Fix B)` | "formatDate is TZ-independent — derives day from local getters of the input Date" | Asserts dynamic getters del mismo Date que se pasa — backup portable |
+| A3 | `live-demand.service.spec.ts` | `getHistoricalHourlySnapshot (Fix A propagation)` | "propagates the original DTO date string into the thrown error (no UTC shift)" | Mock `fetchHistoricalHourly.mockRejectedValue(new Error('...on 2026-07-15'))` → `getHistoricalHourlySnapshot('2026-07-15', undefined)` rechaza con mensaje conteniendo `'date=2026-07-15'` (string original del DTO verbatim) |
+
+**Tests legacy TZ-frágiles corregidos** (sin pérdida de semántica):
+
+- `ree-client.service.spec.ts` (`fetchData`/`fetchFronteras` describe block): `start = new Date('2025-04-20T00:00:00.000Z')` + `end = new Date('2025-04-20T23:59:59.000Z')` cambiadas a `start = new Date(2025, 3, 20, 0, 0, 0)` + `end = new Date(2025, 3, 20, 23, 59, 59)` (constructor local-midnight). PRE-FIX los tests pasaban sólo en runner UTC porque `.toISOString()` rendía la fecha UTC consistentemente; el matcher literal `'2025-04-20 23:59'` se satisfacía. POST-FIX los getters locales divergen entre UTC y CEST/EDT, así que los tests se hacen cross-TZ portable usando constructor local-midnight que es invariante cross-TZ del runner.
+
+**Tests totals post-fix**: Vitest sube de **34 → 39** (5 nuevos netos: 4 ree-client + 1 live-demand). Los legacy TZ-frágiles modificados NO cuentan como nuevos (mismas count).
+
+**Verificado vivo** (esta sesión):
+
+| Comando | Resultado |
+|---------|-----------|
+| `pnpm build` (backend) | exit 0, sin TS errors |
+| `pnpm test:vitest` (backend) | **39/39 pass** (3 archivos: validator + ree-client + live-demand) |
+| ESLint/Prettier sobre los archivos modificados | limpios |
+
+**⚠ Cross-module audit PENDIENTE** (no resuelto en este turn, fuera de scope):
+
+Los callers que invocan `ReeClientService.fetchData` y `ReeClientService.fetchFronteras` pasan Dates construidos aguas arriba (en resolvers / services) sin auditoría explícita del nuevo contrato TZ:
+
+- `backend/src/energy-balance/energy-balance.controller.ts:44, 53` → `fetchData({start: startDate, end: endDate})` (start/end vienen del GraphQL resolver layer).
+- `backend/src/energy-balance/energy-balance.controller.ts:59, 67` → `fetchFronteras({start, end})`.
+- `backend/src/energy-balance/services/energy-balance.service.ts:34` y `frontera.service.ts:34`.
+
+El cambio a `formatDate` con getters locales significa que el día que REE interpreta ahora depende de LOCAL-getters del Date, no de UTC. Si un caller aguas arriba hace `new Date('YYYY-MM-DDT00:00:00.000Z')` (UTC midnight explícito) y el server corre en CEST, `formatDate` rendrá midday wall-clock components que SÍ pueden ser el MISMO día o el día siguiente dependiendo del offset (cualquier offset dentro del mismo día wall-clock mantiene el día; offsets que cruzan medianoche local pueden skew-ear el día). **Smoke test post-deploy recomendado**: ejecutar `curl` real con el rango completo de `fetchData`/`fetchFronteras` para validar que las curvas cubren las 24h esperadas.
+
+**Non-goals explícitos** (recordatorio para agente futuro):
+
+- ⛔ NO añadir timezone forcing (e.g. `process.env.TZ = 'UTC'` en dockerfile) — Fix B es TZ-independent por construcción, no necesita mask externo. Forzar TZ tendría side-effects en logs/Mongoose timestamps.
+- ⛔ NO añadir dep time library (dayjs/luxon/moment) — los getters nativos son suficientes y zero-cost.
+- ⛔ NO asumir que `date.toISOString().slice(0, 10)` "es lo correcto" para extraer un día. Usar `formatDate` (centralizada), o construir con getters locales explícitos. Razones: §3.33 P2 + P3.
+- ⛔ NO usar `.replace('00:00', '23:59')` ni otros replaces sobre `.toISOString()` — código muerto garantizado fuera de UTC runner. Razones: §3.33 P3.
+
+**Premio "Least Surprising": §3.31 ↔ §3.33 thread continuity**: §3.31 introdujo `getHistoricalHourlySnapshot` (resilience Tier-2) con helpers `_historicalHourlyParams` que dependían de `.toISOString()` como parte del contrato. §3.33 cierra el ciclo corrigiendo los helpers para que el rango histórico cubra EXACTAMENTE las 24h del día local, sin dependence de TZ-shift accidental. Future agent que toque `_historicalHourlyParams` o `_liveDateRangeParams` debe leer §3.33 ANTES para entender el contrato isStart=true/false aplicado a `start` vs `tomorrow`.
+
+---
+
 ## 4. Convenciones del Proyecto
 
 ### Backend
@@ -749,40 +913,6 @@ const isDegraded =
 | chrome/chromium instalado | ❌ NO (browser-use no disponible) | — |
 
 ---
-
-### §3.32 Phase 2 §3.32 — Mock fallback + race-fix typo + page footer + DRY Records + 4 polish cycles (resilience Tier-2 UX)
-
-**Decisión** (esta sesión): cuando AMBOS upstream live + historical fallan (cadena entera REE caída), la UI debe mostrar SIEMPRE algo al usuario — datos sintéticos con chip "DEMO" + footer explicativo. Pre-§3.32 la UI mostraba `"Sin curva horaria disponible."` — percibido como error/wrong-state por el usuario cuando en realidad era upstream-down transitorio.
-
-**Mock data source** (`frontend/src/hooks/useLiveDemand.ts`): nueva función sync `buildMockLiveDemand(): LiveDemandData` con `DEMO_CURVE` 24h inline-constante. Plausible demanda española: mínimo 4-5am (~17.5 GW), pico vespertino 20h (~36 GW). `real === prevista` porque el forecast sintético per-region está out-of-scope per §3.31 outstanding #21.
-
-**Race-fix comparison typo (Tier-1 retroactivo)**: `useHistoricalHourly` race-fix pre-§3.32 tenía `historicalHourly.region?.toLowerCase() === (regionSlug ?? "nacional")`. Pero `regionSlug` era TS enum key UPPERCASE (`'NACIONAL'`, `'PENINSULAR'`, ...), mientras backend `regionCacheKey` retorna capitalized string (`"Nacional"`). La comparación `.toLowerCase()` solo aplicaba al LHS; RHS quedaba uppercase → MISMATCH siempre → race-fix deputy broken para regiones ≠ Nacional. **Fix** (single-file): reshape `LiveDemandRegion` enum a kebab-lowercase (`"nacional" | "peninsular" | ...`) + `REGION_DISPLAY_TO_SLUG` mapping. Defense-in-depth `.toLowerCase()` en ambos lados con JSDoc racional (documented retroactivamente para evitar regresión futura del bug).
-
-**Page-level footer attributions** (`frontend/src/App.tsx`): page-level footer agrega dos enlaces de atribución visual conforme demanda del usuario:
-- `Alkiory · https://alkiory.com` (developer/maintainer)
-- `Diseño basado en kit "Full Charts Components" de Frank Esteban Isdray, Figma Community, CC BY 4.0 · https://www.figma.com/@frankuxui`
-
-**4 polish cycles en `frontend/src/components/cards/live-demand-card.tsx`** (code-reviewer-driven, 5 review iterations totales):
-1. **Q1 coherent initial-loading**: pre-§3.32, `deriveMode` retornaba `'live'` cuando `live === undefined` (initial Apollo fetch in flight) → chip "EN VIVO" + body "Sin curva horaria..." UX mismatch. Nuevo `'loading'` Mode dedicado: chip "CARGANDO" + chart loader text-only (coherent visual + a11y `role="status"`).
-2. **DRY pulse animation**: chip-loading usaba `animate-pulse` Tailwind utility. Reemplazo a `.pulse-dot` className (existing `@keyframes pulse-dot` en `index.css:live-chip`).
-3. **Drop redundant chart loader pulse**: 3 indicators concurrentes (chip pulse + chart dot pulse + footer text). Chip solo es suficiente → drop inner chart pulse, keep text only.
-4. **Collapse redundant `loadingLive || live === undefined`**: Apollo v3 acopla `loading: true` ↔ `data: undefined` en normal flow. Eliminado flag `loadingLive` redundante de `deriveMode` signature y `loadingLiveDemand` del hook destructure (estaba unused).
-
-**Mode → maps DRY extraction** (sub-ciclo §3.32 polish, 3 Records nuevas en module scope):
-- `CAPTION_FOR_MODE: Record<Mode, string>` lookup para footer caption text (nested ternary → lookup).
-- `COLOR_FOR_MODE: Record<Mode, string>` lookup para chart stroke + gradient stopColor (4 ternarios duplicados → 1 lookup).
-- `GRADIENT_ID_FOR_MODE: Record<Mode, string>` lookup para gradient fill selector (2 ternarios duplicados → 1 lookup).
-- `Record<Mode, string>` exhaustiveness check: añadir un 5to Mode value se convierte en TS compile error, no silent visual regression.
-
-**Legend revert** (reviewer-driven, §3.32 polish round 4): `COLOR_FOR_MODE` aplicado indistintamente weakeningly: en `historical` mode, ambos legend dot y dashed strip se volvían `C.muted` (same color, sólo dash pattern diferencia). Revert aplicado: legend distingue mock vs non-mock (`mode === "mock" ? C.accentGold : C.live`); chart sigue obedeciendo `COLOR_FOR_MODE`.
-
-**Por qué 3 Records separadas en lugar de 1 mega-`Record<Mode, { text, color, gradientId }>`**: cada Record tiene 1 responsabilidad (caption text / color value / gradient id). El split coincide con existing pattern `REGION_DISPLAY_TO_SLUG` en el mismo archivo. Consolidar a nested MODE_META es un refactor mayor fuera de §3.32.
-
-**Por qué chained inline ternary (NO function-call dispatch) para CO₂ annotation** (round 5 revert): el divider de CO₂ emissions (3-way) NO usa `Record<Mode, ReactNode>` lookup porque los JSX bodies son styling-heavy (`formatDateShort(dateYesterday)` calls embedded, `style={{ marginLeft: 'auto' }}`, multi-segment text). Inline chained ternary es más maintainable para 2-modes annotation cases. Reviewer explícitamente rechazó `renderCo2Annotation()` helper: "function adds ~15 lines for 2 cases that fit a 5-line chained ternary". Lesson durable para futuros casos similares: function-call dispatch solo cuando cases son simple value lookups (como CAPTION/COLOR/GRADIENT_ID); para JSX-heavy bodies, inline wins.
-
-**Validation approach**: `tsc -b` + `eslint` + `prettier --write/check` + `pnpm build` → 6/6 verde. State assertions: `animate-pulse` Referencias removidas, `pulse-dot` className single-source, `loadingLiveDemand` unused dedupe, 3 Records referenciales high, CO₂ inline chained ternary post-revert.
-
-**No regressions**: backend `live-demand.service.ts` Promise.allSettled hybrid (§3.27) no modificado, schema build de `LiveDemandRegionSlug` intacto (§3.31).
 
 ---
 
