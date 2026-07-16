@@ -23,9 +23,38 @@ export class LiveDemand extends Document {
     default: [],
   })
   curve: { h: string; real: number; prevista: number }[];
+
+  /**
+   * Phase 2 §3.31 — region-keyed cache.
+   *
+   * Phase 2 §3.27/§3.28 inicial guardaban UN solo doc (sobreescribiendo).
+   * Ahora con region picker, cada `(region)` tiene su propio slot. TTL es
+   * el mismo (60s) → max 6 docs activos en cualquier momento.
+   *
+   * Default 'Nacional' (slug absent) para backward-compat con docs
+   * pre-§3.31 que se insertaron sin region. El composite index abajo
+   * cubre queries cacheadas per-region + TTL scan.
+   *
+   * NOTA: si la collection ya tiene datos sin `region`, Mongo ODM aplica
+   * default retroactivo sólo al insert/save — los docs existentes quedan
+   * con field undefined. La service layer trata `region === null` como
+   * 'Nacional' lo cual sigue funcionando porque el lookup
+   * `findOne({region: 'Nacional'})` no matchea docs preexistentes con
+   * `region: undefined`. La doc-cleanup (Mongoose @Schema sin
+   * graceful migration per project convention — "no migration, brief
+   * downtime OK") cae en schematic re-creation al deploy siguiente.
+   */
+  @Prop({ type: String, required: true, default: 'Nacional' })
+  region: string;
 }
 
 export const LiveDemandSchema = SchemaFactory.createForClass(LiveDemand);
+
+// Phase 2 §3.31: nuevo composite index `{ region, createdAt }` para
+// (a) cache lookup por región eficiente, (b) TTL scan de docs expirados.
+// MongoDB TTL index scan itera TODO el index — composite key reduce
+// el scan surface por region (TTL de 60s por region → n=6 regions).
+LiveDemandSchema.index({ region: 1, createdAt: 1 }, { name: 'region_ttl' });
 
 // TTL de 60s sobre `createdAt` (autogenerado por `timestamps: true`).
 // La política de cache-aside en `LiveDemandService` aprovecha este TTL:

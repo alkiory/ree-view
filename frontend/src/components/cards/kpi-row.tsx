@@ -1,5 +1,5 @@
-import { KPI, Zap, Gauge, ArrowLeftRight, Battery } from './primitives';
-import { C } from '../../libs/design-tokens';
+import { KPI, Zap, Gauge, ArrowLeftRight, Battery } from "./primitives";
+import { C, SPARK_SYNTHETIC } from "../../libs/design-tokens";
 
 interface KpiRowProps {
   totalGenerationGWh: number;
@@ -7,7 +7,7 @@ interface KpiRowProps {
   saldoInternacional: number;
 }
 
-const numberFmt = new Intl.NumberFormat('es-ES', { maximumFractionDigits: 0 });
+const numberFmt = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 });
 
 export default function KpiRow({
   totalGenerationGWh,
@@ -18,6 +18,10 @@ export default function KpiRow({
   const totalMWh = Math.round(totalGenerationGWh * 1000);
   const avgMWh = Math.round(averageDemandGWh * 1000);
 
+  // Phase 2: cada KPI recebe accent libre de la nueva paleta + sparkline
+  // synthetic. Saldo internacional mantiene semantic conditional (danger
+  // pink cuando exporta más de lo que importa, renewable verde cuando
+  // neto importador) porque el SEMÁNTICO conserva valor informativo.
   return (
     <div className="flex flex-wrap gap-4 mb-6" data-testid="kpi-row">
       <KPI
@@ -25,16 +29,18 @@ export default function KpiRow({
         label="Generación total"
         value={totalTWh}
         unit="TWh"
-        accent={C.live}
+        accent={C.accentCyan}
         sub={`${numberFmt.format(totalMWh)} MWh`}
+        spark={SPARK_SYNTHETIC.generation}
       />
       <KPI
         icon={Gauge}
         label="Demanda (b.c.)"
         value={averageDemandGWh.toFixed(1)}
         unit="GWh"
-        accent="#A78BFA"
+        accent={C.accentPurple}
         sub={`${numberFmt.format(avgMWh)} MWh`}
+        spark={SPARK_SYNTHETIC.demand}
       />
       <KPI
         icon={ArrowLeftRight}
@@ -44,19 +50,21 @@ export default function KpiRow({
         accent={saldoInternacional < 0 ? C.danger : C.renewable}
         sub={
           saldoInternacional < 0
-            ? 'Importa menos de lo que exporta'
+            ? "Importa menos de lo que exporta"
             : saldoInternacional > 0
-              ? 'Neto importador'
-              : 'Equilibrio'
+              ? "Neto importador"
+              : "Equilibrio"
         }
+        spark={SPARK_SYNTHETIC.balance}
       />
       <KPI
         icon={Battery}
         label="Saldo almacenamiento"
         value="—"
         unit="GWh"
-        accent={C.nonRenewable}
+        accent={C.accentGold}
         sub="Pendiente Fase 2"
+        spark={SPARK_SYNTHETIC.storage}
       />
     </div>
   );

@@ -1,13 +1,21 @@
-import { ResponsiveContainer, RadialBarChart, RadialBar, PieChart, Pie, Cell } from 'recharts';
-import { Card, SectionLabel, Leaf, Factory } from './primitives';
-import { C } from '../../libs/design-tokens';
-import { EnergyBalanceType } from '../../types/energy-balance.types';
-import { processGenerationData } from '../../libs/process-generation-data';
+import {
+  ResponsiveContainer,
+  RadialBarChart,
+  RadialBar,
+  PieChart,
+  Pie,
+  Cell,
+} from "recharts";
+import { Card, SectionLabel, Leaf, Factory } from "./primitives";
+import { C } from "../../libs/design-tokens";
+import { EnergyBalanceType } from "../../types/energy-balance.types";
+import { processGenerationData } from "../../libs/process-generation-data";
 
 // `isAnimationActive={false}` en DEV mitiga el doble-mount de React Strict
 // Mode que produce "jitter" de animación en recharts (ver CURRENT.md §3.17
 // nota complementaria sobre React 19).
-const animate = (): false | undefined => (import.meta.env.DEV ? false : undefined);
+const animate = (): false | undefined =>
+  import.meta.env.DEV ? false : undefined;
 
 interface LegendRowProps {
   name: string;
@@ -19,7 +27,10 @@ function LegendRow({ name, pct, color }: LegendRowProps) {
   return (
     <div className="flex items-center justify-between text-[11.5px]">
       <span className="flex items-center gap-1.5" style={{ color: C.text }}>
-        <span className="w-1.5 h-1.5 rounded-full" style={{ background: color }} />
+        <span
+          className="w-1.5 h-1.5 rounded-full"
+          style={{ background: color }}
+        />
         {name}
       </span>
       <span
@@ -38,7 +49,9 @@ interface GenerationCardProps {
   energyBalances: EnergyBalanceType[];
 }
 
-export default function GenerationCard({ energyBalances }: GenerationCardProps) {
+export default function GenerationCard({
+  energyBalances,
+}: GenerationCardProps) {
   const generationData = processGenerationData(energyBalances);
   const renewableShare = generationData.totalRenewablePercentage || 0;
   const nonRenewableShare = 100 - renewableShare;
@@ -59,7 +72,7 @@ export default function GenerationCard({ energyBalances }: GenerationCardProps) 
             <RadialBarChart
               innerRadius="72%"
               outerRadius="100%"
-              data={[{ name: 'renovable', value: renewableShare }]}
+              data={[{ name: "renovable", value: renewableShare }]}
               startAngle={90}
               endAngle={-270}
             >
@@ -84,17 +97,29 @@ export default function GenerationCard({ energyBalances }: GenerationCardProps) 
               {renewableShare.toFixed(1)}%
             </span>
             <span className="text-[10.5px] mt-1" style={{ color: C.muted }}>
-              {new Intl.NumberFormat('es-ES').format(totalMWh)} MWh
+              {new Intl.NumberFormat("es-ES").format(totalMWh)} MWh
             </span>
           </div>
         </div>
         <div className="px-5 pb-5 flex items-center justify-between text-[11.5px]">
-          <span className="flex items-center gap-1.5" style={{ color: C.renewable }}>
-            <span className="w-2 h-2 rounded-full" style={{ background: C.renewable }} />
+          <span
+            className="flex items-center gap-1.5"
+            style={{ color: C.renewable }}
+          >
+            <span
+              className="w-2 h-2 rounded-full"
+              style={{ background: C.renewable }}
+            />
             Renovable
           </span>
-          <span className="flex items-center gap-1.5" style={{ color: C.nonRenewable }}>
-            <span className="w-2 h-2 rounded-full" style={{ background: C.nonRenewable }} />
+          <span
+            className="flex items-center gap-1.5"
+            style={{ color: C.nonRenewable }}
+          >
+            <span
+              className="w-2 h-2 rounded-full"
+              style={{ background: C.nonRenewable }}
+            />
             No renovable · {nonRenewableShare.toFixed(1)}%
           </span>
         </div>
@@ -118,6 +143,11 @@ export default function GenerationCard({ energyBalances }: GenerationCardProps) 
                   >
                     {generationData.renewable.map((d, i) => (
                       <Cell
+                        // Production wedge path: NO use `resolveMixColor()`
+                        // (Phase 2 §3.30) — production data lacks `colorIndex`.
+                        // Color viene del API MongoDB `attributes.color` (REE
+                        // catalog), con `renewableDim`/`nonRenewableDim` como
+                        // fallback defensivo si llega null/undefined.
                         key={`${d.type}-${i}`}
                         fill={(d.color as string) ?? C.renewableDim}
                         stroke="none"
@@ -163,6 +193,8 @@ export default function GenerationCard({ energyBalances }: GenerationCardProps) 
                   >
                     {generationData.nonRenewable.map((d, i) => (
                       <Cell
+                        // Production wedge path: NO use `resolveMixColor()`
+                        // (Phase 2 §3.30) — production data lacks `colorIndex`.
                         key={`${d.type}-${i}`}
                         fill={(d.color as string) ?? C.nonRenewableDim}
                         stroke="none"

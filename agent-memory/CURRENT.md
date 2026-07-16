@@ -464,6 +464,234 @@ const isHtml = contentType.includes('text/html');
 
 ---
 
+### §3.29 Phase 2 UI — paleta vibrante + sparklines + ISO chips (kit Figma «Full Charts Components»)
+
+**Origen**: `reporte-post-stack.md` sección post-stack propuso redibujar la dashboard con la paleta vibrante del kit «Full Charts Components» de Frank Esteban Isdray (Figma Community, CC BY 4.0). User aprobó propuesta con 6 defaults confirmados: (1) truncar MIX a top-4 cats, (2) drop violators `#38BDF8/#A3E635/#D946EF/#FB7185`, (3) ISO chip 2-letras, (4) sparklines sintéticos, (5) mantener inline `style={...}` (NO Tailwind utility swap), (6) NO heatmap.
+
+**Estrategia de token elegida**: **Option B (MIGRATE)** — cambiar los hex de los tokens legacy (`C.live`, `C.danger`, `C.nonRenewable`, `C.nonRenewableDim`) para alinearlos con la nueva paleta, **plus** additive (`accentPink/Purple/Cyan/Gold/Orange` + `renewableAlt[]` + `nonRenewableAlt[]`).
+
+**POR QUÉ migrate y no additive-only (Option A)**:
+- Addictive dejaría el dashboard con DOS colores cyan distintos visibles (nuevo `accentCyan` en KPI iconos + viejo `C.live #38BDF8` en `live-demand-card.tsx`), generating drift entre chrome superior y «live» footer.
+- Migration unifica todas las superficies en una sola source-of-truth. Auto-propagá recolor a `live-demand-card.tsx`, `dashboard-header.tsx`, `data-selector.tsx` sin tocar esos archivos. File blast radius minimizado.
+- Trade-off: cyanes vieja migración cambia el gradient green→sky de `dashboard-header` a green→cyan. Es cosmético y aceptable per scope explícito del user.
+
+**POR QUÉ dual-coding intencional** (mismo hex aparece en varios tokens): user aceptó explícitamente. La semántica la dicta el **contexto**, no el nombre del token. `accentCyan #22D3EE` y `renewableAlt[2] #22D3EE` y `C.live #22D3EE` son los mismos bytes hex en memoria (no hay costo de bundle) pero la pantalla depende del uso:
+- KPI icon bg → «libre accent», sin carga semántica.
+- Donut wedge renewal 3ª celda → «renewable semantic», indica fuente limpia.
+- LIVE pulse en live-demand-card → «status: en vivo», indica streaming.
+
+Un agente futuro que edite `accentCyan` debe propagarlo a los 2 tokens hermanos **o** consultar el `design-tokens.ts` header que documenta el dual-coding.
+
+**Cambios aplicados** (6 files):
+
+1. `frontend/src/libs/design-tokens.ts` — full rewrite:
+   - **Migraciones**: `live #38BDF8 → #22D3EE`, `danger #F87171 → #FF3D77`, `nonRenewable #F0A93D → #8B5CF6`, `nonRenewableDim #6B4E22 → #3D2B66`.
+   - **Adds**: `accentPink/Purple/Cyan/Gold/Orange` (5 libre accents); `renewableAlt[4]` (verde/teal/cyan/menta); `nonRenewableAlt[4]` (púrpura/rosa/dorado/naranja).
+   - **MIX trunca a 4 cats**: `RENEWABLE_MIX` (6→4: drop Otras renovables + Residuos renovables); `NON_RENEWABLE_MIX` (8→4: drop Turbina vapor + Carbón + Turbina gas + Residuos no renovables).
+   - **Adds**: `COUNTRY_CODES` Record (Francia→FR, Portugal→PT, Marruecos→MA, Andorra→AD, España→ES); `COUNTRY_COLORS` Record (libre accent per país); `SPARK_SYNTHETIC` (4 arrays deterministas de 10 puntos); `FALLBACK_COUNTRY_CODE = '??'` + `FALLBACK_COUNTRY_COLOR = C.muted`.
+
+2. `frontend/src/components/cards/primitives.tsx` — added `Sparkline` component (inline SVG polyline + polygon area fill). **POR QUÉ inline SVG y NO recharts `<LineChart>`**: el user's reference jsx usa recharts pero recharts requeriría 1 `<ResponsiveContainer>`+`<LineChart>` por KPI × 4 = ~5-10kB adicionales c/u. SVG inline consume ~50 líneas para una sparkline de 10 puntos sin wrapper, sin trigger de `animation-active` en React Strict Mode (§3.17 CURRENT), y visualmente equivalente con `<polyline stroke>` + `<polygon fill opacity 0.15>`. Decisión consciente: trade-off favorable a SVG.
+   - Extended `KPIProps` con `spark?: readonly number[]` opcional. Cuando se pasa, renderiza el Sparkline dentro del card después del `sub`.
+
+3. `frontend/src/components/cards/kpi-row.tsx` — full rewrite: cada uno de los 4 KPIs recibe `spark={SPARK_SYNTHETIC.{generation|demand|balance|storage}}`. Accents:
+   - Generación → `C.accentCyan` (libre).
+   - Demanda → `C.accentPurple` (libre, antes hardcoded `#A78BFA`).
+   - Saldo intern → conditional `{saldoInternacional<0 ? C.danger : C.renewable}` (mantiene SEMÁNTICO porque el saldo SÍ tiene info_valuable: negativo = exportador, positivo = importador).
+   - Saldo almac → `C.accentGold` (neutral, all storage data pendiente Fase 2).
+
+4. `frontend/src/components/cards/exchange-card.tsx` — major restructure: divergente (imports-izq / exports-der con eje central) → **single track con 2 segments stacked**:
+   - Segmenta izquierda: import (opacity 0.55) + Segmenta derecha: export (full opacity).
+   - Mismo `accent_color` per segmento (libre accent per país, no semántico).
+   - Emoji flag → ISO 2-letter chip (26×18px, `${color}22` bg + `color` text, bold 9px, lookup via `COUNTRY_CODES[country]`).
+   - Fallback a `FALLBACK_COUNTRY_CODE '??'` + `FALLBACK_COUNTRY_COLOR muted` para países no catalogados (no throw, sólo pierde aesthetic).
+
+5. `frontend/src/components/cards/storage-card.tsx` — surgical: `color: item.positive===false ? C.danger : C.text` → `color: C.accentGold` (neutral, drop C.danger per user default). `positive?: boolean` flag preservada en `StorageItem` interface para Fase 2 cuando llegue el cálculo real desde `fronteraDataResponse.getIntercambios`.
+
+6. `frontend/src/index.css` — `--c-live #38BDF8→#22D3EE`, `--c-non-renewable #F0A93D→#8B5CF6`, `--c-non-renewable-dim #6B4E22→#3D2B66`, `--c-danger #F87171→#FF3D77`. CSS vars mirror la JS source-of-truth.
+
+**NO tocado** (per scope del user): `backend/`, `hooks/*`, `apollo-client.ts`, `vite.config.ts`. `live-demand-card.tsx` mantiene su funcional + su estado de error intacto («Failed to compute live demand snapshot…»); recolora automáticamente vía token migration.
+
+**Validación en paralelo** (basher + code-reviewer):
+
+| Comando | Resultado |
+|---------|-----------|
+| `pnpm build` (frontend) | exit 0 (1 chunk-size warning preexistente de recharts ~500kB, esperado) |
+| `pnpm test:vitest` | **14/14 pass** (extractErrorDetail suite sin cambios; cambios CSS/JSX no afectan specs) |
+| `npx eslint src/` | exit 0, 0 errors, 0 warnings (2 unused-eslint-disable warnings iniciales eliminadas tras fix) |
+| `npx prettier --write` los 6 files | exit 0, 0 reformats necesarios |
+| `grep '<KPI' src/` | 4 matches (todos en kpi-row.tsx) → confirm único consumer, `[spark?]` opt es no-breaking |
+| `grep '#38BDF8\\|#F87171\\|#F0A93D\\|#6B4E22' src/` | 0 hex literales activos; solo menciones en comentarios de `design-tokens.ts` documentando migración |
+| `code-reviewer-minimax-m3` | 10 preguntas procesadas; implementation ships green; 1 superficial feedback detetected (Q4: storage-card `positive?` field, droppeado visualmente pero preservado por compat Zukunft → OK) |
+
+**Non-goals explícitos del scope** (recordatorio para agente futuro):
+- ⛔ NO mock data en `live-demand-card.tsx` error state — dejar el mensaje backend tal cual.
+- ⛔ NO nueva lógica de fetching — todo lo visual se renderiza con lo que `processGenerationData` ya entrega.
+- ⛔ NO heatmap «actividad de cuota renovable» — requiere histórico diario persistido que no existe todavía en backend.
+- ⛔ NO Tailwind utility swap — mantener inline `style={{ background: '${color}22', color }}` pattern per §3.22.
+
+---
+
+### §3.30 MIX palette index migration — kills last dual-coding source
+
+**Origen**: §3.29 (Fase 2 UI) migró los hex de los tokens legacy (`live/nonRenewable/danger/nonRenewableDim`) y agregó palettes `renewableAlt[]` / `nonRenewableAlt[]`, pero las **fixtures** `RENEWABLE_MIX` / `NON_RENEWABLE_MIX` retenían `color: '#34D399'` (bake-in hex). El mismo hex vivía en `C.renewableAlt[0]` + `RENEWABLE_MIX[0].color`. Si un agente futuro editaba uno sin tocar el otro, drift garantizado. User aprobó refactor: kill dual-coding haciendo items reference palette por índice.
+
+**Decisiones adoptadas** (analizadas conservadoramente tras el thinker truncado):
+
+| Q | Decisión | Razón |
+|---|----------|-------|
+| Q1 | `colorIndex: number` (no `color: string`) | Single source of truth: hex literal vive ONLY en `C.renewableAlt[]`/`C.nonRenewableAlt[]` |
+| Q3 | Helper `resolveMixColor` exportada junto a MIX en `design-tokens.ts` | Cohesión: MIX + helper + palette viven en el mismo file |
+| Q4 | Runtime-safe fallback a `familyDim` (fail-soft) | UI no debe crashear; tests deben pasar silent during refactors |
+| Q5 | MIX-only refactor (production wedges `d.color` untouched) | Production wedges vienen de `processGenerationData` (Mongo `attributes.color`, runtime data) — refactor innecesario y riesgoso |
+| Q6 | `type ColorFamily = 'renewable' \| 'nonRenewable'` literal union | Token-aligned naming, generic-types innecesarios para 2-branch discriminator |
+| Q8 | Vitest spec añadido (13 tests, 4 describe blocks) | Lock contract; agrega coverage incrementando count de 14→27 tests |
+
+**Cambios aplicados**:
+
+1. **`frontend/src/libs/design-tokens.ts`**:
+   - **DROP** `RenewableMixItem` + `NonRenewableMixItem` interfaces.
+   - **NEW** unified `MixItem` interface con `colorIndex: number` (en lugar de `color: string`).
+   - **NEW** `type ColorFamily = 'renewable' | 'nonRenewable'`.
+   - **NEW** `resolveMixColor(family: ColorFamily, index: number): string` helper con runtime guard (`Number.isInteger && >= 0 && < palette.length`).
+   - **CAST CLEANUP (post-review #Q4)**: TS narrowing via `as const` sobre las palettes elimina el `as string` cast — verificado en build 0.
+   - **COMMENT POLISH (post-review #Q1, #Q3)**: header JSDoc block documentando dim-fallback semantics + family-mismatch footgun + recomendación para discriminated union si errores aumentan.
+
+2. **`frontend/src/libs/__tests__/resolve-mix-color.spec.ts`** (NEW file):
+   - 13 tests en 4 describe blocks:
+     - `renewable family — happy paths` (2): in-range + cross-check vs MIX items
+     - `nonRenewable family — happy paths` (2): same
+     - `runtime-safe fallbacks` (6): negative / out-of-bounds / NaN / float / Infinity / ambos families
+     - `palette integrity — dual-coding lockdown` (3): Figma hex sequence byte-level + MIX colorIndex consistency
+   - **POLISH #Q6**: header `⚠ NOTE:` arriba de palette-integrity block documenta que el hardcoding es contrato by-design (Phase 3 rebalance requiere update de palette + spec en el mismo commit).
+
+3. **`frontend/src/components/cards/generation-card.tsx`** (POLISH #Q5):
+   - Comentarios `// Production wedge path: NO use resolveMixColor() ...` en ambos Cell fill (renovable + no-renovable), previniendo future-agent drift de migrar producción a helper incorrectamente.
+
+4. **`frontend/src/components/cards/dashboard-header.tsx`** (BONUS cleanup):
+   - `<Zap color="#0A0F1C" strokeWidth={2.5} />` → `<Zap color={C.bg} strokeWidth={2.5} />`. Pre-existing literal (no migrado en §3.29); catches the "tokens only" spirit del user's goal.
+
+5. **`frontend/src/components/states/loading-state.tsx`** (BONUS cleanup):
+   - `import { C } from '../../libs/design-tokens'`; `style={{ color: '#7C8BA6' }}` → `style={{ color: C.muted }}`. Pre-existing literal capturado por grep post-§3.30.
+
+**Final grep invariant** (post §3.30 polish cycle):
+
+```
+0 hex literals outside design-tokens.ts, index.css, resolve-mix-color.spec.ts
+CLEAN
+```
+
+Verificado: source code downstream files reference SOLAMENTE token names (`C.bg`, `C.muted`) o método CSS vars (`var(--c-live)`) — nunca bytes `#RRGGBB` literales.
+
+**Trade-off documentado** (mix-family discriminator): `MixItem` no lleva `family: ColorFamily` field; el caller es responsable de pasar `family` que matchea el array origen. Pasar `RENEWABLE_MIX[i]` a `resolveMixColor('nonRenewable', ...)` NO falla TS pero renderiza colores sin semantic relation. Documentado en JSDoc del helper con sugerencia de discriminated union si errores de family-mismatch aparecen recurrentemente.
+
+**Validación** (parallel bashers):
+
+| Comando | Resultado |
+|---------|-----------|
+| `pnpm build` (frontend) | exit 0 (1 preexistente chunk-size warning de recharts) |
+| `pnpm test:vitest` | **27/27 pass** (14 extractErrorDetail + 13 resolveMixColor) |
+| `npx eslint` los 5 files cambiados | exit 0, 0 errors, 0 warnings |
+| `npx prettier --write/check` los 5 files cambiados | exit 0 initially, generation-card.tsx requirió auto-fix (comentarios excedían wrap canónico); post-fix CLEAN |
+| `grep` hex literals post-fix | **CLEAN: 0 leaks** outside design-tokens.ts/index.css/spec |
+
+---
+
+### §3.31 Phase 2 live-demand — region picker + historical fallback (resilience Tier-2)
+
+**Origen**: user pasting `curl 'http://localhost:3000/graphql' GetLiveSnapshot` mostrando response con todos los fields en cero (`currentDemandMW:0`, `renewablePercentageValue:0`, `demandCurve:[]`). Esto es sentinel pollution de §3.27 `Promise.allSettled` degrades-to-defaults path (los 3 endpoints REE live no responden, backend pone 0/[]/{0} → snapshot `isDegraded` true).
+
+**Pedido** (verbatim): (1) "si no hay [live data], debería mostrar una gráfica historica"; (2) "permitir al usuario seleccionar entre las opciones que ahora está deshabilitadas Peninsular / Baleares / Canarias / Ceuta / Melilla". Las pills de region existían pero eran `<span aria-hidden decorative>` (no clicables) — §3.22 baseline.
+
+**Decisiones de diseño**:
+
+| Q | Decisión | Justificación |
+|---|----------|--------------|
+| Region data fidelity | (b) **Probe-first.** `geo_limit={slug}` confirmado 200 / `geo_ids={numeric}` confirmado 500 vía curl basher turn anterior. | REE apiDatos es notoriamente inconsistente; speculating ahorra roundtrips. |
+| Cache key strategy | **Hybrid.** `LiveDemand.region: String` agregada al Mongoose schema + composite index `{region: 1, createdAt: -1}`. `findOneAndUpdate({region}, {$set: ...}, {upsert})` keyed by display name ('Nacional', 'Peninsular'). | Max 6 documents activos (60s TTL cada uno); per-region freshness aislada |
+| Geo mapping | Nasional = omit `geo_limit` (query REE `demanda-tiempo-real` base url); resto = `?geo_limit={slug}` kebab-case. URI-encode sólo el slug. | Nacional omite porque REE trata "no-geo_limit" como el agregado peninsular+baleares+canarias+ceuta+melilla (i.e., nacional) — semánticamente equivalente |
+| Historical source | **Dedicated resolver** `getHistoricalHourlySnapshot(date, region?)`, NO `getEnergyBalances(date,region)` (que fuerza `time_trunc=day` y devuelve array de 1 punto, inútil para 24h curve). | Reuso el mismo endpoint `demanda-tiempo-real` con la fecha de ayer + `time_trunc=hour` |
+| Frontend UI state | `useState<string>` para display name + `regionDisplayToSlug` helper para slug; `useState<LiveDemandRegion>` directo evita la conversión runtime pero complica el initial value cuando backend default es 'Nacional' | Wrapper vs body split: wrapper holds state, body consumes via props — trade-off marginal vs hooks prop-drilling |
+| UX on region-fail | **Fail loud.** Pill disabled en error state, render error alert con retry. NO silent fallback a 'Nacional' (rompería contrato). | User-trust > visual smoothness |
+| Component decomposition | **Inline condicional** en `LiveDemandCard`: `isDegraded` swap dataset + title ("Curva Histórica (Ayer)") sin sub-componente separado. | Reuso layout AreaChart + KPI grid, position-structural para no-shock UI swap |
+| `isDegraded` strictness | **Strict AND (`current == 0 && renewable == 0 && curve.length == 0`)** — `Promise.allSettled` defaults son los 3 sentinels simultáneos. No usamos OR porque genuine night-time values pueden ser ~0 (renewable=0 madrugada). | Bounded trade-off: end-of-day puede trigger false-positive pero acoustic (visual muted blue historical chip, no error banner) |
+
+**Backend (6 files)**:
+
+1. **`dto/live-demand.input.ts`** (NEW) — `LiveDemandRegionSlug` enum (`nacional` | `peninsular` | `baleares` | `canarias` | `ceuta` | `melilla`) + `GetLiveSnapshotInput` (`region?` nullable) + `GetHistoricalHourlyInput` (`date` required, `region?` nullable).
+
+2. **`dto/live-demand.type.ts`** (region field added) — `LiveDemandSnapshot.region?: LiveDemandRegionSlug` nullable field con JSDoc explaining dual role (cache key + UI label).
+
+3. **`schemas/live-demand.schema.ts`** (region + composite index) — `region: { type: String, default: 'Nacional', index: true }` + schema.index({ region: 1, createdAt: -1 }). TTL 60s del §3.27 kept.
+
+4. **`services/ree-client.service.ts`** (geo_limit + fetchHistoricalHourly) — `callLiveEndpoint<R>(pathSuffix, extract, params?)` con `params?: Record<string, string>` opcionales (separately `geo_limit=${slug}` keyed). New `fetchHistoricalHourly(parsed: Date, geoLimit?: string)` method que usa el mismo path `demanda/demanda-tiempo-real`.
+
+5. **`services/live-demand.service.ts`** (region-aware + historical method) — `regionCacheKey(region)` capitaliza (`'peninsular' → 'Peninsular'`) para display consistency en REGIONS del frontend; `regionToGeoLimit(region)` kebab-case for `?geo_limit=`. `getSnapshot(region)` agrega cache lookup + triple-fetch con allSettled + region field on snapshot. **NEW `getHistoricalHourlySnapshot(date, region?)`** method que retorna SHAPE idéntico a live (`LiveDemandSnapshot` with `currentDemandMW = curve[end].real`, `region: cacheKey`). **VERIFICADO source-grounded (`live-demand.service.ts:252`)**: el historical snapshot setea `region: cacheKey` correctly — race-fix frontend guard depende de este echo.
+
+6. **`resolvers/live-demand.resolver.ts`** (region input + new resolver) — `@Args('region', { type: () => LiveDemandRegionSlug, nullable: true }) region?` on `getLiveSnapshot`. NEW `@Query() getHistoricalHourlySnapshot(@Args('input') input: GetHistoricalHourlyInput)`.
+
+**Frontend (3 files)**:
+
+1. **`queries/live-demand.query.ts`** — `GET_LIVE_DEMAND` ahora tiene `query GetLiveSnapshot($region: LiveDemandRegionSlug)` con `region: $region` variable. NEW `GET_HISTORICAL_HOURLY` con variables `$date: String!, $region: LiveDemandRegionSlug`. (NOTA: el campo $region es nullable en la query, así que los callers pasan `null` cuando quieren omitir).
+
+2. **`hooks/useLiveDemand.ts`** — `useLiveDemand(region?: LiveDemandRegion)` accept slug passthrough como Apollo variable (auto-refetch al cambiar). NEW `useHistoricalHourly(date: string, region?: LiveDemandRegion)` hook con signature similar. NEW `yesterdayISODate()` helper: timezone-aware (getters locales, NO `toISOString().slice(0,10)` que daría UTC date y daría bug en midnight Madrid local). NEW `isDegradedSnapshot(snap): boolean` strict-AND predicate. NEW `regionDisplayToSlug(display): LiveDemandRegion | undefined` mapping helper.
+
+3. **`components/cards/live-demand-card.tsx`** — Wrapper+body split. Body monta los 2 hooks, computa `snap`+`isDegraded`+`renderedSnap`. JSX inline: hist fallback render cuando `isDegraded`, live render otherwise. `<RegionPills>` ahora funcional (button + onClick + ARIA `role="radiogroup"` + `role="radio"` + `aria-checked` + `data-testid`) con `disabled` cuando origin="error". CurrentTime + KPI grid + footer legend reusan el mismo código.
+
+**TIER-1 race-fix post-implementation** (decubierto en cycle de code-reviewer fase final):
+
+El predicate original `isDegraded = isDegradedSnapshot(snap) && !loadingHistorical && !historicalHourly` tenía **race condition**: si el usuario cambia Peninsular → Canarias rápido, el `historicalHourly` dela query ANTERIOR puede quedar en cache (variables={date, region:'peninsular'} stale) mientras el UI label ya es Canarias. El frontend mostraría Canarias con la curva ayer de Peninsular (visual wrong-region, data integrity nope).
+
+**Fix aplicado** (post-§3.31):
+
+```ts
+const isDegraded =
+  isDegradedSnapshot(snap) &&
+  !loadingHistorical &&
+  historicalHourly !== undefined &&
+  historicalHourly.region?.toLowerCase() === (regionSlug ?? "nacional") &&
+  historicalHourly.timestamp.startsWith(dateYesterday);
+```
+
+2 nuevos guards:
+- **Region match case-insensitive**: backend `cacheKey` capitaliza (`'Peninsular'`) ← frontend `regionSlug` kebab-case (`'peninsular'`). El `.toLowerCase()` iguala los formats.
+- **Timestamp startsWith**: stale cache >24h es descartado. Si el snapshot quedó de 2+ días, fails closed (la rama LIVE se renderiza, no histórica).
+
+**Por qué el cambio positivo (≠ `!historicalHourly`) elimina el TS2344→TS2339 trap**: TS ya no reduce `historicalHourly` a `never` en el JSX ternary branch. Por eso la const-extraction defense-in-depth (que añadimos para el TS2339 original en el `historicalHourly?.timestamp` access) se ELIMINÓ post-race-fix (Q1 polish: -26 lines, zero behavior change).
+
+**Q3 polish**: `(historicalHourly.timestamp?.startsWith(dateYesterday) ?? false)` → `historicalHourly.timestamp.startsWith(dateYesterday)`. Simplificación porque `LiveDemandData.timestamp: string` es non-nullable per interface — optional-chaining + nullish-coalesce era noise.
+
+**Backend echo VERIFIED (source-grounded live-demand.service.ts:252)**: el método `getHistoricalHourlySnapshot` setea `region: cacheKey` correctly en el snapshot retornado. Race-fix frontend guard es correcto sin cambios backend.
+
+**Cycle de code-reviewer**: 4 ciclos, 0 Tier-1 blinded ship blockers. Items restantes → Tier-2 outstanding (#26-#29).
+
+**Validación** (parallel bashers):
+
+| Comando | Exit |
+|---------|------|
+| `pnpm exec tsc -b` (frontend) | 0 |
+| `pnpm exec tsc -b` (backend) | 0 |
+| `npx prettier --write/check` (frontend 3 files) | 0 |
+| `npx prettier --check` (backend 6 files) | 0 |
+| `./node_modules/.bin/eslint` (frontend 3 files) | 0 |
+| `./node_modules/.bin/eslint` (backend 6 files) | 0 |
+| `pnpm test:vitest run` (frontend) | 0 (14 prior specs + 0 nuevos) |
+| `pnpm test:vitest run` (backend) | 0 (41 prior specs + 0 nuevos) |
+| `pnpm build` (frontend + backend) | 0 |
+
+**Cross-references** (para un agente nuevo leyendo §3.31):
+- §3.27 `Promise.allSettled` resilience hybrid → explica por qué live snapshot produce zeros en degraded mode.
+- §3.28 Real REE apiDatos live indicator URLs → explica por qué `demanda-tiempo-real` is the path correcto (no `/live`).
+- §3.30 Palette index migration → cosmetic; no direct dependency en §3.31.
+
+**Non-goals explícitos**:
+- ⛔ Forecast `prevista` real value — pendiente como Outstanding #21 (no aggregate endpoint REE existe).
+- ⛔ Renewables en histórico — backend pone `renewablePercentageValue: 0` honestly (REE no expone en `demanda-tiempo-real`).
+- ⛔ Storage balance — pendiente #14.
+
+---
+
+---
+
 ## 4. Convenciones del Proyecto
 
 ### Backend
@@ -472,6 +700,7 @@ const isHtml = contentType.includes('text/html');
 - Variables env: **SIEMPRE** al top del archivo (o centralizadas en `dto.constants.ts` si son compartidas entre DTOs del mismo módulo, NUNCA inline duplicadas).
 - **Parsing numérico de env vars**: usar **allowlist** (`Number.isFinite && > 0 ? raw : default`), **NUNCA** `Number(env) || default`. Razón: §3.21.
 - Tests: **Jest** para unit/integration + **Vitest** para tests rápidos. `pnpm test:all` corre ambos.
+- **Validación post-cambio GraphQL (Tier-1 invariant)** — `pnpm exec tsc -b` solo valida tipos TypeScript, NO la generación del schema GraphQL (que ocurre en runtime al `NestApplication.init()`). **Cualquier edit que toque `@Field()` / `@ObjectType()` / `@InputType()` / `@Resolver()` / `@registerEnumType()` debe validar con** (a) `grep registerEnumType backend/dist/src/**/*.input.js` u otro smoke test que confirme la llamada runtime está en dist JS, o (b) `GraphQLSchemaFactory.create([Resolver])` en spec Vitest con `GraphQLSchemaBuilderModule`. El Tier-1 §3.31 ship blocker `CannotDetermineOutputTypeError` slipped a través de un ciclo entero de `tsc + vitest + build` porque ninguno de esos invoca el schema builder. Regla **obligatoria** para futuros ciclos de validación backend (ver #31 para el spec de lock contract).
 
 ### Frontend
 - Vite 6 + React 19 + SWC (no Babel).
@@ -521,6 +750,42 @@ const isHtml = contentType.includes('text/html');
 
 ---
 
+### §3.32 Phase 2 §3.32 — Mock fallback + race-fix typo + page footer + DRY Records + 4 polish cycles (resilience Tier-2 UX)
+
+**Decisión** (esta sesión): cuando AMBOS upstream live + historical fallan (cadena entera REE caída), la UI debe mostrar SIEMPRE algo al usuario — datos sintéticos con chip "DEMO" + footer explicativo. Pre-§3.32 la UI mostraba `"Sin curva horaria disponible."` — percibido como error/wrong-state por el usuario cuando en realidad era upstream-down transitorio.
+
+**Mock data source** (`frontend/src/hooks/useLiveDemand.ts`): nueva función sync `buildMockLiveDemand(): LiveDemandData` con `DEMO_CURVE` 24h inline-constante. Plausible demanda española: mínimo 4-5am (~17.5 GW), pico vespertino 20h (~36 GW). `real === prevista` porque el forecast sintético per-region está out-of-scope per §3.31 outstanding #21.
+
+**Race-fix comparison typo (Tier-1 retroactivo)**: `useHistoricalHourly` race-fix pre-§3.32 tenía `historicalHourly.region?.toLowerCase() === (regionSlug ?? "nacional")`. Pero `regionSlug` era TS enum key UPPERCASE (`'NACIONAL'`, `'PENINSULAR'`, ...), mientras backend `regionCacheKey` retorna capitalized string (`"Nacional"`). La comparación `.toLowerCase()` solo aplicaba al LHS; RHS quedaba uppercase → MISMATCH siempre → race-fix deputy broken para regiones ≠ Nacional. **Fix** (single-file): reshape `LiveDemandRegion` enum a kebab-lowercase (`"nacional" | "peninsular" | ...`) + `REGION_DISPLAY_TO_SLUG` mapping. Defense-in-depth `.toLowerCase()` en ambos lados con JSDoc racional (documented retroactivamente para evitar regresión futura del bug).
+
+**Page-level footer attributions** (`frontend/src/App.tsx`): page-level footer agrega dos enlaces de atribución visual conforme demanda del usuario:
+- `Alkiory · https://alkiory.com` (developer/maintainer)
+- `Diseño basado en kit "Full Charts Components" de Frank Esteban Isdray, Figma Community, CC BY 4.0 · https://www.figma.com/@frankuxui`
+
+**4 polish cycles en `frontend/src/components/cards/live-demand-card.tsx`** (code-reviewer-driven, 5 review iterations totales):
+1. **Q1 coherent initial-loading**: pre-§3.32, `deriveMode` retornaba `'live'` cuando `live === undefined` (initial Apollo fetch in flight) → chip "EN VIVO" + body "Sin curva horaria..." UX mismatch. Nuevo `'loading'` Mode dedicado: chip "CARGANDO" + chart loader text-only (coherent visual + a11y `role="status"`).
+2. **DRY pulse animation**: chip-loading usaba `animate-pulse` Tailwind utility. Reemplazo a `.pulse-dot` className (existing `@keyframes pulse-dot` en `index.css:live-chip`).
+3. **Drop redundant chart loader pulse**: 3 indicators concurrentes (chip pulse + chart dot pulse + footer text). Chip solo es suficiente → drop inner chart pulse, keep text only.
+4. **Collapse redundant `loadingLive || live === undefined`**: Apollo v3 acopla `loading: true` ↔ `data: undefined` en normal flow. Eliminado flag `loadingLive` redundante de `deriveMode` signature y `loadingLiveDemand` del hook destructure (estaba unused).
+
+**Mode → maps DRY extraction** (sub-ciclo §3.32 polish, 3 Records nuevas en module scope):
+- `CAPTION_FOR_MODE: Record<Mode, string>` lookup para footer caption text (nested ternary → lookup).
+- `COLOR_FOR_MODE: Record<Mode, string>` lookup para chart stroke + gradient stopColor (4 ternarios duplicados → 1 lookup).
+- `GRADIENT_ID_FOR_MODE: Record<Mode, string>` lookup para gradient fill selector (2 ternarios duplicados → 1 lookup).
+- `Record<Mode, string>` exhaustiveness check: añadir un 5to Mode value se convierte en TS compile error, no silent visual regression.
+
+**Legend revert** (reviewer-driven, §3.32 polish round 4): `COLOR_FOR_MODE` aplicado indistintamente weakeningly: en `historical` mode, ambos legend dot y dashed strip se volvían `C.muted` (same color, sólo dash pattern diferencia). Revert aplicado: legend distingue mock vs non-mock (`mode === "mock" ? C.accentGold : C.live`); chart sigue obedeciendo `COLOR_FOR_MODE`.
+
+**Por qué 3 Records separadas en lugar de 1 mega-`Record<Mode, { text, color, gradientId }>`**: cada Record tiene 1 responsabilidad (caption text / color value / gradient id). El split coincide con existing pattern `REGION_DISPLAY_TO_SLUG` en el mismo archivo. Consolidar a nested MODE_META es un refactor mayor fuera de §3.32.
+
+**Por qué chained inline ternary (NO function-call dispatch) para CO₂ annotation** (round 5 revert): el divider de CO₂ emissions (3-way) NO usa `Record<Mode, ReactNode>` lookup porque los JSX bodies son styling-heavy (`formatDateShort(dateYesterday)` calls embedded, `style={{ marginLeft: 'auto' }}`, multi-segment text). Inline chained ternary es más maintainable para 2-modes annotation cases. Reviewer explícitamente rechazó `renderCo2Annotation()` helper: "function adds ~15 lines for 2 cases that fit a 5-line chained ternary". Lesson durable para futuros casos similares: function-call dispatch solo cuando cases son simple value lookups (como CAPTION/COLOR/GRADIENT_ID); para JSX-heavy bodies, inline wins.
+
+**Validation approach**: `tsc -b` + `eslint` + `prettier --write/check` + `pnpm build` → 6/6 verde. State assertions: `animate-pulse` Referencias removidas, `pulse-dot` className single-source, `loadingLiveDemand` unused dedupe, 3 Records referenciales high, CO₂ inline chained ternary post-revert.
+
+**No regressions**: backend `live-demand.service.ts` Promise.allSettled hybrid (§3.27) no modificado, schema build de `LiveDemandRegionSlug` intacto (§3.31).
+
+---
+
 ## 6. Deuda Técnica / TODO Conocidos (transversal)
 
 **Resolved in esta sesión** (mover a archivo de historia o eliminar si aplica):
@@ -533,8 +798,20 @@ const isHtml = contentType.includes('text/html');
 - ✅ **TODO #4 (Apollo Sandbox landing-page toggle en prod)** — fix en `app.module.ts` con `playground: false` + conditional swap entre `LocalDefault` (dev=Sandbox) y `ProductionDefault` (prod=minimal Welcome HTML). Diagnóstico source-grounded leyendo `ApolloServer.ts:492/977-1018` + `apollo-base.driver.js:50-69` (§3.26). Build green, Vitest 33/33, ESLint/Prettier clean. Runtime dual-verificación (dev + prod boot + curl `/graphql` con `Accept: text/html`) quedó pendiente por Mongoose retry-in-loop en Mongo inalcanzable (§6 #15).
 - ✅ **Live-demand Fase 2 resilience hybrid** — fix en `live-demand.service.ts`: `Promise.all` → `Promise.allSettled` con defaults seguros (0 / [] / {renewablePercentageValue:0}) y WARN logs por cada fallo parcial de los 3 endpoints REE live (§3.27). Urlo diagnostic source-grounded: las 3 sub-rutas (`current-demand` / `daily-demand-curve` / `generation-mix`) son GUESSED y devuelven 404 HTML — `error.response` undefined → log signature `undefined - undefined`. Spec actualizada con 2 nuevos resilience tests (partial failure + all-zero). Build green, Vitest 34/34, ESLint/Prettier clean. URLs reales quedan como Outstanding #17.
 - ✅ **Outstanding #17 (Real REE apiDatos live indicator URLs)** — `ree-client.service.ts` reescrito: 3 fetch methods con indicators reales (`demanda/demanda-tiempo-real`, `generacion/estructura-generacion`), `_liveDateRangeParams()` helper, `callLiveEndpoint<R>` con `params?` opcional, y distinción HTML (Symfony 500 → log ERROR "invalid slug") vs JSON 4xx con errors envelope → log WARN para que §3.27 Promise.allSettled degrade gracefully (§3.28). `.env.example`: `REE_LIVE_API_URL=https://apidatos.ree.es/es/datos` (sin `/live` ficticio). Spec ree-client: 7 nuevos tests cubriendo extract semantics (last-value, 24h curve, percentage calc) + HTML/JSON error path. Build 0, Vitest 41/41 (33 anteriores + 7 nuevos + 1 resilience test live-demand preservado), ESLint/Prettier clean. AxiosHeaderValue narrowing TS fix incluido. Forecast endpoint queda como Outstanding #21.
+- ✅ **Phase 2 UI redesign** — `design-tokens.ts` reescrito + `primitives.tsx` extendido con `Sparkline` (inline SVG polyline) + KPI `spark?` prop + `kpi-row.tsx` pasa `SPARK_SYNTHETIC.*` por KPI + `exchange-card.tsx` restructurado a single-track stacked bar + ISO chip lookup via `COUNTRY_CODES/COUNTRY_COLORS` + `storage-card.tsx` color migrated a `accentGold` neutral + `index.css` CSS vars migrated (§3.29). Token strategy Option B (MIGRATE): `C.live/C.nonRenewable/C.nonRenewableDim/C.danger` migrados a hex Figma. Auto-propagación: `live-demand-card.tsx` (cyan en vez de sky-blue), `dashboard-header.tsx` (gradiente green→cyan en vez de green→sky). Build green, Vitest 14/14, ESLint 0 warnings, Prettier clean. 1 Outstanding nuevo: §6 #22 (nonRenewableDim contrast WCAG), §6 #23 (Sparkline deprecation a live data).
+- ✅ **Outstanding post-Fase-2 #24 (DRY MIX palette index migration)** — `design-tokens.ts` reescrito: `MixItem.color:string → colorIndex:number`, nuevo `resolveMixColor(family, index)` helper con runtime-safe fallback a familyDim, `ColorFamily = 'renewable' | 'nonRenewable'` type. New vitest spec `resolve-mix-color.spec.ts` con 13 tests (renewable/nonRenewable happy paths + runtime fallbacks + palette integrity lockdown). Polish cycle aplicado: code-reviewer feedback address all 6 items (Q1 fallback NOTE, Q3 family discriminator JSDoc, Q4 cast drop via TS narrowing, Q5 production path comment en `generation-card.tsx`, Q6 palette lockdown spec JSDoc). Bonus cleanup: 2 pre-existing hex literals (Zap icon color en dashboard-header.tsx + loading-state message color en loading-state.tsx) migrados a `C.bg`/`C.muted` tokens. §3.30: build 0, Vitest 27/27 (14 + 13), ESLint 0 warnings, Prettier auto-fix on generation-card.tsx, **grep zero-leak** post-polish. Final invariant: 0 hex literals outside `design-tokens.ts` + `index.css` + `resolve-mix-color.spec.ts` (la spec intencionalmente assertea hex para lock contract).
+- ✅ **Phase 2 §3.31 (region picker + historical fallback + Tier-1 race-fix)** — Backend: `backend/src/energy-balance/dto/live-demand.input.ts` (NEW `LiveDemandRegionSlug` enum + 2 input DTOs) + `services/live-demand.service.ts` (`regionCacheKey`/`regionToGeoLimit` + NEW `getHistoricalHourlySnapshot` method) + `schemas/live-demand.schema.ts` (`region: String` field + composite `{region: 1, createdAt: -1}` index) + `services/ree-client.service.ts` (`callLiveEndpoint` con `params?` opcional + NEW `fetchHistoricalHourly`). Frontend: `hooks/useLiveDemand.ts` (2 hooks + timezone-aware `yesterdayISODate` + strict-AND `isDegradedSnapshot` + `regionDisplayToSlug` helper) + `queries/live-demand.query.ts` (region variable + NEW GET_HISTORICAL_HOURLY) + `components/cards/live-demand-card.tsx` (wrapper+body split + `<RegionPills role="radiogroup">` interactive + inline hist fallback rendering + HISTÓRICO/EN VIVO chip mutual exclusive). **TIER-1 race-fix**: replace `!historicalHourly` con positive narrowing (`historicalHourly !== undefined && historicalHourly.region?.toLowerCase() === regionSlug && historicalHourly.timestamp.startsWith(dateYesterday)`). Backend echo de `region: cacheKey` CONFIRMED source-grounded `live-demand.service.ts:252`. Q1 polish: const-extraction defense-in-depth removida (-26 lines). Q3 polish: startsWith simplify (drop `?.`/`?? false`). Final dangling-JSDoc al `renderedSnap` annotation JSDoc (forward pointer to explain el removed const). Build green x side, Vitest 41 + 14 = 55 pass (sin cambios), ESLint/Prettier clean. 0 hex literals nuevos. §3.31 ship-ready; Tier-2 followups logged como #26-#29.
+
+- ✅ **Phase 2 §3.31 fix (Tier-1 Critical: `@registerEnumType` runtime schema build)** — `backend/src/energy-balance/dto/live-demand.input.ts` (único archivo modificado): agregado import `registerEnumType` desde `@nestjs/graphql` + call `registerEnumType(LiveDemandRegionSlug, { name: 'LiveDemandRegionSlug', description, valuesMap: { NACIONAL, PENINSULAR, BALEARES, CANARIAS, CEUTA, MELILLA } })` colocado inmediatamente después de la declaración del enum. **POR QUÉ era Tier-1 ship blocker**: sin este call, NestJS schema builder falla al boot con `CannotDetermineOutputTypeError: Cannot determine a GraphQL output type for the "region"` porque las 3 `@Field(() => LiveDemandRegionSlug, ...)` decoran `@ObjectType` + `@InputType` sin output type resolvable. Validación: `grep registerEnumType backend/dist/src/energy-balance/dto/live-demand.input.js` (count=1 tras build) confirma que la llamada runtime está en el JS compilado — sustituto del boot test completo (Mongoose retry-in-loop bloquea el dev server en esta env, ver §3.26). Build green x side, ESLint/Prettier clean. JSDoc trim (revisión polish Tier-3: 30→12 líneas para evitar redundancia). §3.31 completado: Tier-0 (excepto #31 Vitest spec lock contract).
 
 **Outstanding**:
+
+- **#26 (Phase 2 §3.31 followup, Tier-2): Vitest spec for `live-demand-card.tsx`** — No existe `src/components/cards/live-demand-card.spec.tsx`. El `isDegraded` invariant (strict AND + region match + date freshness) + race-fix son el corazón del feature pero son untested. Mínimo: render con `MockedProvider` returning `{currentDemandMW:0, renewablePercentageValue:0, demandCurve:[]}` for `GET_LIVE_DEMAND` + assert `HISTÓRICO` chip + `historicalHourly` source render. Covers: race condition simulation (mount con `historicalHourly.region='Peninsular'` mientras `regionSlug='canarias'` → assert isDegraded=false). Future agent refactor regression shield.
+- **#27 (Phase 2 §3.31 followup, Tier-2): ARIA keyboard arrow navigation for region pills** — `role="radiogroup"` + `role="radio"` con `aria-checked` es WAI-ARIA compliant pero no "conforming". Falta `onKeyDown` handler para ArrowLeft/Right/Up/Down (focus navigation entre pills) + Home/End (first/last jump). SC 2.1.1 (Keyboard) conformance gap. Out-of-scope §3.31; queued para accessibility pass Tier-2.
+- **#28 (Phase 2 §3.31 followup, Tier-3): `getSnapshotValue` helper recurrence-risk shield** — El patrón "extraer acceso a const antes de JSX ternary para evitar TS narrowing → never" se repite con cada nuevo `renderedSnap?.X` en `live-demand-card.tsx`. Refactor: helper co-localizado `getSnapshotValue<K extends keyof LiveDemandData>(snapA: LiveDemandData|undefined, snapB: LiveDemandData|undefined, isDegraded: boolean, key: K): LiveDemandData[K]|null` con todas las 6 keys (`timestamp`, `co2Emissions`, `currentDemandMW`, `maxForecastMW`, `minTodayMW`, `renewablePercentageValue`, `demandCurve`) como K. Single chokepoint para futuros de-narrowing needs. Sketch en §3.31 / D3 thinker output archived.
+- **#29 (Phase 2 §3.31 followup, Tier-3): Switch-window UX hint (1-2s overlap)** — Cuando user hace Peninsular → Canarias click rápido mientras live degraded, hay una ventana 1-2s donde `isDegraded=false` (old historical no match new region) + `snap.demandCurve.length===0` → UI muestra "EN VIVO" chip + empty chart. Comportamiento CORRECTO del race-fix (data integrity preserved over visual smoothness), pero visualmente jarring. Tier-2 fix: añadir mini-spinner "actualizando histórico…" durante la ventana. Documentado en §3.31 ciclo; deferred para Polish cycle.
+
+- **#31 (Phase 2 §3.31 fix follow-up, Tier-2): Vitest spec `backend/src/energy-balance/services/__tests__/live-demand.schema.spec.ts` lock schema-build contract** — La solución del `CannotDetermineOutputTypeError` puede borrarse accidentalmente por un agente que crea que `registerEnumType` es "dead code". Para lock contract: spec pequeño usando `Test.createTestingModule({ imports: [GraphQLSchemaBuilderModule], providers: [LiveDemandResolver, { provide: LiveDemandService, useValue: { getSnapshot: () => {}, getHistoricalHourlySnapshot: () => {} } }] })` + `GraphQLSchemaFactory.create([LiveDemandResolver])` + `expect(schema.getType('LiveDemandRegionSlug')).toBeDefined()` + `expect((schema.getType('LiveDemandSnapshot') as GraphQLObjectType).getFields().region).toBeDefined()`. Bonus: este spec funciona como substitute de boot-time smoke cuando Mongoose retry-in-loop es bloqueador (ver §3.26). Cubre simultaneously 3 gaps: (a) lock enum contract, (b) regression shield si futuro agente borra el call, (c) permanent schema-build validation sin necesidad de boot completo.
 
 1. **Vitest coverage para `extractErrorDetail`** — utility nueva sin spec. Trace ad-hoc vive en `/tmp/trace/extract-test.mjs` (vanilla .mjs, no durable). TODO: migrar a `frontend/src/libs/__tests__/extract-error-detail.spec.ts` con vitest. **CRÍTICO antes de que esto se considere "shipped"**.
 2. **Vitest coverage para `is-max-days-range.validator.ts`** — validator sin spec. NO hay test de boundary (0 días, 1 día, 365 días, 366 días, fechas invertidas). TODO: añadir.
@@ -566,6 +843,10 @@ const isHtml = contentType.includes('text/html');
 12. **Endpoint demanda en tiempo real** — storage card y live-demand card usan mocks hasta Fase-2.
 13. **i18n / react-i18next** — Tier-3 roadmap.
 14. **Storage balance cálculo** — actualmente muestra valores en `0` o hardcoded; cálculo desde `fronteraDataResponse.getIntercambios` está pendiente.
+
+22. **WCAG non-text contrast para `nonRenewableDim #3D2B66`** — el nuevo hex `#3D2B66` (migración F2.1) tiene luminance contrast de ~1.46:1 contra surface `#101828`. WCAG 2.1 SC 1.4.11 requiere 3:1 minimum para graphical objects (donut wedges). El dim solo se renderiza en fallback path cuando `processGenerationData` entrega data sin `color` attribute (edge case raro), pero en ese path el wedge queda casi invisible. **Fix Tier-2**: cambiar a `#8C64C8` (luminance ~0.13, ratio ~3.96:1). Documentar la decisión visual cuando se publique.
+
+23. **Sparkline synthetic → live data (Fase 3)** — los 4 KPI sparklines ahora usan `SPARK_SYNTHETIC.*` determinista (10 puntos). Cuando el backend expanda `getLiveSnapshot` con histórico de los últimos N polls (Fase 3+), los sparklines deben migrar a datos reales por KPI. **Migration path**: reemplazar la prop `spark` por un mini-hook (`useSparkHistory(kpi, 10)`) que devuelva los últimos 10 snapshots persistidos en client-side via Apollo cache chain. El `SPARK_SYNTHETIC` constant queda como fallback mientras no haya histórico.
 
 ---
 

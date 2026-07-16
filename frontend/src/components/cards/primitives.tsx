@@ -1,5 +1,5 @@
-import type { ComponentType, ReactNode } from 'react';
-import { C } from '../../libs/design-tokens';
+import type { ComponentType, ReactNode } from "react";
+import { C } from "../../libs/design-tokens";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Card wrapper — mirror exacto del bloque Card del mockup aprobado.
@@ -10,13 +10,72 @@ interface CardProps {
   className?: string;
 }
 
-export function Card({ children, className = '' }: CardProps) {
+export function Card({ children, className = "" }: CardProps) {
   return (
     <div
       className={`rounded-2xl border ${className}`}
       style={{ background: C.surface, borderColor: C.border }}
     >
       {children}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sparkline — SVG polyline minimal para KPI sparklines (Phase 2).
+// INLINE SVG en lugar de recharts `<LineChart>` para evitar el overhead
+// de un `<ResponsiveContainer>` por sparkline × 4 KPIs (~5-10kB c/u).
+// Recharts ya está en bundle (GenerationCard), pero un polyline de 10
+// puntos es preferible: misma legibilidad visual, sin wrapper, y sin
+// triggers de animation-active en StrictMode (§3.17 CURRENT).
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface SparklineProps {
+  data: readonly number[];
+  color: string;
+  height?: number;
+}
+
+export function Sparkline({ data, color, height = 32 }: SparklineProps) {
+  // Empty-data guard: evita viewBox NaN-coords si `data = []`.
+  if (data.length === 0) {
+    return <div style={{ height, width: "100%" }} aria-hidden="true" />;
+  }
+  const max = Math.max(...data);
+  const min = Math.min(...data);
+  const range = max - min || 1; // evita div-by-zero en datasets flat
+  const w = 100; // viewBox width (logical units; preserveAspectRatio=none estira)
+  const h = 32; // viewBox height
+  const stepX = w / Math.max(data.length - 1, 1);
+
+  const points = data.map((v, i) => {
+    const x = i * stepX;
+    // Eje Y invertido: valor más alto arriba (Menor y = más arriba en SVG).
+    const y = h - ((v - min) / range) * h;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  });
+  // Área rellena (gradiente sutil implícito): cerramos el polígono por abajo.
+  const areaPoints = `${points.join(" ")} ${w.toFixed(2)},${h} 0,${h}`;
+
+  return (
+    <div style={{ height, width: "100%" }} aria-hidden="true">
+      <svg
+        width="100%"
+        height={height}
+        viewBox={`0 0 ${w} ${h}`}
+        preserveAspectRatio="none"
+        style={{ display: "block" }}
+      >
+        <polygon points={areaPoints} fill={color} opacity="0.15" />
+        <polyline
+          points={points.join(" ")}
+          fill="none"
+          stroke={color}
+          strokeWidth="1.5"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      </svg>
     </div>
   );
 }
@@ -55,9 +114,19 @@ interface KPIProps {
   unit?: string;
   accent: string;
   sub?: string;
+  // Phase 2: sparkline inline (10 puntos). Si está, renderiza debajo del sub.
+  spark?: readonly number[];
 }
 
-export function KPI({ icon: Icon, label, value, unit, accent, sub }: KPIProps) {
+export function KPI({
+  icon: Icon,
+  label,
+  value,
+  unit,
+  accent,
+  sub,
+  spark,
+}: KPIProps) {
   return (
     <Card className="flex-1 min-w-[190px]">
       <div className="p-5 flex flex-col gap-3">
@@ -93,6 +162,11 @@ export function KPI({ icon: Icon, label, value, unit, accent, sub }: KPIProps) {
             {sub}
           </span>
         )}
+        {spark && spark.length > 0 && (
+          <div className="-mx-1">
+            <Sparkline data={spark} color={accent} />
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -119,8 +193,16 @@ interface CreateIconArgs {
   viewBox?: string;
 }
 
-function createIcon({ paths, viewBox = '0 0 24 24' }: CreateIconArgs): IconComponent {
-  const Icon: IconComponent = ({ size = 24, color = 'currentColor', strokeWidth = 2, className = '' }) => (
+function createIcon({
+  paths,
+  viewBox = "0 0 24 24",
+}: CreateIconArgs): IconComponent {
+  const Icon: IconComponent = ({
+    size = 24,
+    color = "currentColor",
+    strokeWidth = 2,
+    className = "",
+  }) => (
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox={viewBox}
@@ -145,8 +227,10 @@ function createIcon({ paths, viewBox = '0 0 24 24' }: CreateIconArgs): IconCompo
 // React DevTools los distinga (todos comparten la firma IconComponent
 // de createIcon arriba).
 export const Zap = Object.assign(
-  createIcon({ paths: <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" /> }),
-  { displayName: 'Zap' },
+  createIcon({
+    paths: <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />,
+  }),
+  { displayName: "Zap" },
 );
 
 export const Gauge = Object.assign(
@@ -159,7 +243,7 @@ export const Gauge = Object.assign(
       </>
     ),
   }),
-  { displayName: 'Gauge' },
+  { displayName: "Gauge" },
 );
 
 export const ArrowLeftRight = Object.assign(
@@ -173,7 +257,7 @@ export const ArrowLeftRight = Object.assign(
       </>
     ),
   }),
-  { displayName: 'ArrowLeftRight' },
+  { displayName: "ArrowLeftRight" },
 );
 
 export const Battery = Object.assign(
@@ -188,7 +272,7 @@ export const Battery = Object.assign(
       </>
     ),
   }),
-  { displayName: 'Battery' },
+  { displayName: "Battery" },
 );
 
 export const Leaf = Object.assign(
@@ -200,7 +284,7 @@ export const Leaf = Object.assign(
       </>
     ),
   }),
-  { displayName: 'Leaf' },
+  { displayName: "Leaf" },
 );
 
 export const Factory = Object.assign(
@@ -209,7 +293,7 @@ export const Factory = Object.assign(
       <path d="M2 20V8a2 2 0 0 1 2-2h2v4l3-3h2v4l3-3h2v4l3-3h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z" />
     ),
   }),
-  { displayName: 'Factory' },
+  { displayName: "Factory" },
 );
 
 export const Radio = Object.assign(
@@ -223,7 +307,7 @@ export const Radio = Object.assign(
       </>
     ),
   }),
-  { displayName: 'Radio' },
+  { displayName: "Radio" },
 );
 
 export const CalendarDays = Object.assign(
@@ -242,12 +326,12 @@ export const CalendarDays = Object.assign(
       </>
     ),
   }),
-  { displayName: 'CalendarDays' },
+  { displayName: "CalendarDays" },
 );
 
 export const ChevronDown = Object.assign(
   createIcon({ paths: <polyline points="6 9 12 15 18 9" /> }),
-  { displayName: 'ChevronDown' },
+  { displayName: "ChevronDown" },
 );
 
 export const ICONS = {

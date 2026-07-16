@@ -1,17 +1,20 @@
-import { CalendarDays, Zap } from './primitives';
-import { C } from '../../libs/design-tokens';
+import { CalendarDays, Zap } from "./primitives";
+import { C } from "../../libs/design-tokens";
 
 interface DashboardHeaderProps {
   startDate: string; // ISO 'YYYY-MM-DD'
-  endDate: string;   // ISO 'YYYY-MM-DD'
+  endDate: string; // ISO 'YYYY-MM-DD'
 }
 
 const formatES = (isoDate: string): string => {
-  const [year, month, day] = isoDate.split('-');
+  const [year, month, day] = isoDate.split("-");
   return `${day}/${month}/${year}`;
 };
 
-export default function DashboardHeader({ startDate, endDate }: DashboardHeaderProps) {
+export default function DashboardHeader({
+  startDate,
+  endDate,
+}: DashboardHeaderProps) {
   const formatted =
     startDate === endDate
       ? formatES(startDate)
@@ -25,9 +28,12 @@ export default function DashboardHeader({ startDate, endDate }: DashboardHeaderP
       <div className="flex items-center gap-3">
         <div
           className="w-10 h-10 rounded-xl flex items-center justify-center"
-          style={{ background: `linear-gradient(135deg, ${C.renewable}, ${C.live})` }}
+          style={{
+            background: `linear-gradient(135deg, ${C.renewable}, ${C.live})`,
+          }}
         >
-          <Zap size={19} color="#0A0F1C" strokeWidth={2.5} />
+          {/* Phase 2 §3.30 cleanup: hex literal → C.bg token ref. */}
+          <Zap size={19} color={C.bg} strokeWidth={2.5} />
         </div>
         <div>
           <h1

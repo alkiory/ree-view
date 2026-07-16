@@ -212,7 +212,7 @@ export class ReeClientService {
    * cuando aparezca un slug válido lo cableamos. La resiliencia §3.27
    * sigue protegiendo la UI del error-loop 60s mientras tanto.
    */
-  async fetchCurrentDemand(): Promise<number> {
+  async fetchCurrentDemand(region?: string): Promise<number> {
     return this.callLiveEndpoint<number>(
       'demanda/demanda-tiempo-real',
       (data) => {
@@ -227,13 +227,13 @@ export class ReeClientService {
         }
         return last.value;
       },
-      this._liveDateRangeParams(),
+      this._liveDateRangeParams(region),
     );
   }
 
-  async fetchDailyDemandCurve(): Promise<
-    Array<{ h: string; real: number; prevista: number }>
-  > {
+  async fetchDailyDemandCurve(
+    region?: string,
+  ): Promise<Array<{ h: string; real: number; prevista: number }>> {
     return this.callLiveEndpoint<
       Array<{ h: string; real: number; prevista: number }>
     >(
@@ -256,11 +256,11 @@ export class ReeClientService {
           return { h: `${hh}h`, real: val, prevista: val };
         });
       },
-      this._liveDateRangeParams(),
+      this._liveDateRangeParams(region),
     );
   }
 
-  async fetchGenerationMix(): Promise<{
+  async fetchGenerationMix(region?: string): Promise<{
     renewablePercentageValue: number;
   }> {
     return this.callLiveEndpoint<{ renewablePercentageValue: number }>(
@@ -289,7 +289,49 @@ export class ReeClientService {
         }
         return { renewablePercentageValue: Number(pct.toFixed(1)) };
       },
-      this._liveDateRangeParams(),
+      this._liveDateRangeParams(region),
+    );
+  }
+
+  /**
+   * Phase 2 §3.31 — historical hourly archive (24 hourly points para una
+   * fecha pasada en una region dada). El mismo endpoint
+   * `demanda-tiempo-real` se usa con un rango explícito de 24h (start=date
+   * 00:00, end=date+1 00:00) + `time_trunc=hour` + (opcional) `geo_limit`.
+   *
+   * REE devuelve los 24 entries del día en `included[0].attributes.content[]`
+   * con shape `{ value, datetime, geo_id }`. El extractor reutiliza la
+   * misma lógica que `fetchDailyDemandCurve`.
+   *
+   * POR QUÉ método separado (no extension del live):
+   *   Live requiere «ahora» (today 00:00 → tomorrow 00:00); historical
+   *   requiere una fecha pasada concreta (`date 00:00 → date+1 00:00`).
+   *   Mezclar las dos signatures haría el código confuso.
+   */
+  async fetchHistoricalHourly(
+    date: Date,
+    region?: string,
+  ): Promise<Array<{ h: string; real: number; prevista: number }>> {
+    return this.callLiveEndpoint<
+      Array<{ h: string; real: number; prevista: number }>
+    >(
+      'demanda/demanda-tiempo-real',
+      (data) => {
+        const merged: any[] = (
+          Array.isArray(data?.included) ? data.included : []
+        ).flatMap((g: any) => g?.attributes?.content ?? []);
+        if (!merged.length) {
+          throw new Error(
+            `Invalid historical response: empty content for ${region ?? 'nacional'} on ${date.toISOString().slice(0, 10)}`,
+          );
+        }
+        return merged.map((entry: any) => {
+          const hh = String(entry?.datetime ?? '').slice(11, 13) || '00';
+          const val = Number(entry?.value ?? 0);
+          return { h: `${hh}h`, real: val, prevista: val };
+        });
+      },
+      this._historicalHourlyParams(date, region),
     );
   }
 
@@ -300,17 +342,63 @@ export class ReeClientService {
    * `tiempo-real` (sin params devuelve 400 "data not available").
    * Reutiliza `formatDate()` para mantener el formato consistente con
    * `fetchData`/`fetchFronteras`.
+   *
+   * Phase 2 §3.31 — `region?: string` opcional: cuando NO es undefined,
+   * añade `geo_limit=<region>` para que REE devuelva solo el geo
+   * pedido. Slug mapping se decide en `LiveDemandService` (← `region`
+   * hex kebab ya validado por `@IsEnum` en `GetLiveSnapshotInput`).
+   *
+   * POR QUÉ no agregamos `geo_limit=nacional` (omit siempre):
+   *   REE devuelve la peticion nacional completa cuando NO se manda
+   *   `geo_limit` (omitir query param). Mandar `?geo_limit=nacional`
+   *   mismo da resultado, pero si omitimos evitamos roundtrip extra
+   *   de codificar el param. La branch de mapeo en el service
+   *   (`region ?? null`) → omit param es el "nacional" implícito.
    */
-  private _liveDateRangeParams(): Record<string, string> {
+  private _liveDateRangeParams(region?: string): Record<string, string> {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    return {
+    const params: Record<string, string> = {
       start_date: this.formatDate(today, true),
       end_date: this.formatDate(tomorrow, false),
       time_trunc: 'hour',
     };
+    if (region) {
+      params.geo_limit = region;
+    }
+    return params;
+  }
+
+  /**
+   * Phase 2 §3.31 — params para `fetchHistoricalHourly`: rango explícito
+   * de 24h en una fecha pasada concreta. Acepta region opcional con el
+   * mismo comportamiento que `_liveDateRangeParams`.
+   *
+   * POR QUÉ helper separado:
+   *   - `_liveDateRangeParams` usa today/tomorrow (server time).
+   *   - Historical hourly necesita un `date` específico del caller (pasado).
+   *   - `formatDate` se reusa para mantener el shape de date strings
+   *     consistente con los otros fetch methods.
+   */
+  private _historicalHourlyParams(
+    date: Date,
+    region?: string,
+  ): Record<string, string> {
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    const params: Record<string, string> = {
+      start_date: this.formatDate(start, true),
+      end_date: this.formatDate(end, false),
+      time_trunc: 'hour',
+    };
+    if (region) {
+      params.geo_limit = region;
+    }
+    return params;
   }
 
   /**
