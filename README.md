@@ -159,3 +159,5 @@ pnpm run test:vitest
 ---
 
 *Hecho con fines educativos/demostrativos sobre la API pública de REE. No afiliado a Red Eléctrica de España.*
+
+Gracias por visitar el proyecto y explorar el balance eléctrico nacional en tiempo real.
