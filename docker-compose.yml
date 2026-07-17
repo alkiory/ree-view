@@ -1,34 +1,43 @@
 services:
   backend:
-    image: iamsergiocampbell/ree-view-backend:1.0.0
+    image: iamsergiocampbell/ree-view-backend:1.0.3
     ports:
       - '5001:5001'
     environment:
       PORT: 5001
-      CORS_ORIGINS: http://localhost:5173,http://localhost:80
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3001,http://localhost:80,
       MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/energy-balance}
       REE_API_URL: https://apidatos.ree.es/es/datos/balance/balance-electrico
       REE_FRONTERAS_API_URL: https://apidatos.ree.es/es/datos/balance/todas-fronteras-fisicos-programados
       REE_API_URL_ERROR: https://apidatos.ree.es/invalid-endpoint
     depends_on:
-      - mongo
-    restart: always
+      mongo:
+        condition: service_healthy # Espera a que Mongo esté realmente sano antes de iniciar
+    restart: unless-stopped
+    healthcheck:
+      # Usamos wget como alternativa universal si curl no está instalado en tu imagen de producción
+      test: wget --no-verbose --tries=1 --spider http://localhost:5001/health || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - app-network
 
   frontend:
-    image: iamsergiocampbell/ree-view-frontend:1.0.0
-    restart: always
+    image: iamsergiocampbell/ree-view-frontend:1.0.2
+    container_name: ree-view-frontend-1
+    restart: unless-stopped
     expose:
       - '3001'
     environment:
-      - VITE_API_URL=/graphql
+      - VITE_API_URL=http://backend:5001/graphql
       - NODE_ENV=production
       - PORT=3001
     depends_on:
       - backend
     networks:
       - app-network
+      - npm_network
 
   mongo:
     image: mongo:6.0
@@ -36,9 +45,13 @@ services:
       MONGO_INITDB_DATABASE: energy-balance
     volumes:
       - mongo-data:/data/db
-    restart: always
+    restart: unless-stopped
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongo localhost:27017/energy-balance --quiet
+      # CORRECCIÓN: Cambiado 'mongo' por 'mongosh' y adaptado el comando de ping para Mongo 6.0
+      test: mongosh --quiet --eval 'db.runCommand({ping:1})' localhost:27017/energy-balance
+      interval: 30s
+      timeout: 10s
+      retries: 3
     networks:
       - app-network
 

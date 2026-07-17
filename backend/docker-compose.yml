@@ -8,7 +8,7 @@ services:
       MONGODB_URI: ${MONGODB_URI}
       REE_API_URL: https://apidatos.ree.es/es/datos/balance/balance-electrico
       REE_FRONTERAS_API_URL: https://apidatos.ree.es/es/datos/balance/todas-fronteras-fisicos-programados
-      REE_API_URL_ERROR=https: //apidatos.ree.es/invalid-endpoint
+      REE_API_URL_ERROR: https://apidatos.ree.es/invalid-endpoint
     depends_on:
       - mongo
   mongo:
