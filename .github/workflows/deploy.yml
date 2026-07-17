@@ -29,6 +29,9 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - name: Install normal dependencies
+        run: pnpm install
+
       - name: approve dependencies
         run: pnpm approve-builds
 
