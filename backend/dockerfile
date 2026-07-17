@@ -1,7 +1,33 @@
 FROM node:20.10.0
 WORKDIR /app
+
+# Pin pnpm v10.5.2 (última familia compatible con Node 20.x). pnpm 11.x
+# requiere Node ≥22.13 y rompe el build con
+# `SyntaxError: ... does not provide an export named 'styleText'`.
 COPY package*.json ./
-RUN npm install -g pnpm
-RUN pnpm install
+RUN npm install -g pnpm@10.5.2
+
+# pnpm install --frozen-lockfile=false (explícito): permite que pnpm
+# regenere pnpm-lock.yaml cuando añadimos o actualizamos deps. La capa
+# Docker se reconstruye automáticamente porque COPY package*.json ./
+# arriba invalida esta capa si el lockfile cambia.
+# Esto evita el bug clásico: "Cannot find module '@apollo/server'" que
+# aparecía cuando la imagen se construyó antes de añadir el peer dep.
+RUN pnpm install --frozen-lockfile=false
+
+# Healthcheck basado en Node 18+ fetch (no instalamos curl para mantener
+# la imagen pequeña). Top-level await requiere Node 18+, ya garantizado.
+COPY healthcheck.js ./
+
 COPY . .
+
+# HEALTHCHECK que Docker invoca cada 30s. Una vez unhealthy, docker-compose
+# con `restart: unless-stopped` reinicia el contenedor automáticamente.
+#   --start-period=40s  → NestJS tarda ese tiempo en arrancar la primera vez;
+#                         evita flapping mientras compila.
+#   --timeout=10s       → si Nest cuelga, el check falla rápido.
+#   --retries=3         → 3 fallos consecutivos = unhealthy (vs 1=transitorio).
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD node healthcheck.js
+
 CMD ["pnpm", "run", "start"]

@@ -42,3 +42,9 @@ export class Frontera extends Document {
 }
 
 export const FronteraSchema = SchemaFactory.createForClass(Frontera);
+
+const CACHE_TTL_SECONDS = Number(process.env.CACHE_TTL_SECONDS) || 86_400;
+FronteraSchema.index(
+  { createdAt: 1 },
+  { expireAfterSeconds: CACHE_TTL_SECONDS, name: 'ree_view_ttl_createdAt' },
+);

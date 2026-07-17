@@ -1,3 +1,6 @@
+import { C } from '../../libs/design-tokens';
+import { extractErrorDetail } from '../../libs/extract-error-detail';
+
 interface FronteraErrorStateProps {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   error: any;
@@ -5,15 +8,28 @@ interface FronteraErrorStateProps {
 }
 
 export default function FronteraErrorState({ error, refetch }: FronteraErrorStateProps) {
+  const detail = extractErrorDetail(error);
   return (
-    <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4">
-      <pre>Error (Frontera): {error.message}</pre>
+    <div
+      className="rounded-2xl border p-5"
+      style={{ background: C.surface, borderColor: C.border }}
+      data-testid="frontera-error-state"
+      role="alert"
+    >
+      <p className="text-[14px] font-semibold" style={{ color: C.danger }}>
+        Error al cargar datos de fronteras
+      </p>
+      <p className="mt-2 text-[12px]" style={{ color: C.muted }}>
+        {detail}
+      </p>
       <button
-        onClick={refetch}
-        className="mt-2 bg-red-600 text-white py-1 px-3 rounded text-sm"
+        type="button"
+        onClick={() => refetch()}
+        className="mt-3 px-3 py-1.5 rounded-lg text-[12px] font-semibold"
+        style={{ background: C.danger, color: C.textOnDanger }}
       >
-        Retry Frontera Data
+        Reintentar
       </button>
     </div>
   );
-};
+}

@@ -1,10 +1,27 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + React + TS</title>
+    <meta name="description" content="Balance eléctrico nacional — visualizador del sistema eléctrico español (REE)." />
+    <!-- §3.44 NEW — FOUC-prevent script: aplica data-theme desde localStorage
+         BEFORE que React hidrate. Evita flash de blanco-claro en mount cuando
+         el usuario persistió 'light' en sesión previa. -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem('ree-view-theme');
+          if (t === 'light' || t === 'dark') {
+            document.documentElement.setAttribute('data-theme', t);
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+    <title>REE · Balance eléctrico nacional</title>
   </head>
   <body>
     <div id="root"></div>

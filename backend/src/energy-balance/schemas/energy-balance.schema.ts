@@ -41,3 +41,9 @@ export class EnergyBalance extends Document {
 }
 
 export const EnergyBalanceSchema = SchemaFactory.createForClass(EnergyBalance);
+
+const CACHE_TTL_SECONDS = Number(process.env.CACHE_TTL_SECONDS) || 86_400;
+EnergyBalanceSchema.index(
+  { createdAt: 1 },
+  { expireAfterSeconds: CACHE_TTL_SECONDS, name: 'ree_view_ttl_createdAt' },
+);

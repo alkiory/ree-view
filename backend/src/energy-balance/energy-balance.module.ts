@@ -11,12 +11,27 @@ import { EnergyBalanceResolver } from './resolvers/energy-balance.resolver';
 import { FronteraService } from './services/frontera.service';
 import { Frontera, FronteraSchema } from './schemas/frontier-schema';
 import { FronteraResolver } from './resolvers/frontera.resolver';
+import {
+  LiveDemandHistorical,
+  LiveDemandHistoricalSchema,
+} from './schemas/live-demand-historical.schema';
+import { LiveDemand, LiveDemandSchema } from './schemas/live-demand.schema';
+import { LiveDemandService } from './services/live-demand.service';
+import { LiveDemandResolver } from './resolvers/live-demand.resolver';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: EnergyBalance.name, schema: EnergyBalanceSchema },
       { name: Frontera.name, schema: FronteraSchema },
+      {
+        name: LiveDemand.name,
+        schema: LiveDemandSchema,
+      },
+      {
+        name: LiveDemandHistorical.name,
+        schema: LiveDemandHistoricalSchema,
+      },
     ]),
     HttpModule,
   ],
@@ -26,6 +41,8 @@ import { FronteraResolver } from './resolvers/frontera.resolver';
     FronteraService,
     EnergyBalanceResolver,
     FronteraResolver,
+    LiveDemandService,
+    LiveDemandResolver,
   ],
   exports: [EnergyBalanceService, ReeClientService, FronteraService],
 })

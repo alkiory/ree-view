@@ -1,18 +1,31 @@
 import { Query, Resolver, Args } from '@nestjs/graphql';
+import { BadRequestException } from '@nestjs/common';
+import { plainToInstance } from 'class-transformer';
+import { validate } from 'class-validator';
+
 import { EnergyBalanceService } from '../services/energy-balance.service';
 import { EnergyBalanceType } from '../dto/energy-balance.type';
 import { EnergyBalanceInput } from '../dto/energy-balance.input';
-import { BadRequestException } from '@nestjs/common';
 
 @Resolver(() => EnergyBalanceType)
 export class EnergyBalanceResolver {
   constructor(private balanceService: EnergyBalanceService) {}
 
   @Query(() => [EnergyBalanceType])
-  async getEnergyBalances(@Args('input') input: EnergyBalanceInput) {
+  async getEnergyBalances(@Args('input') rawInput: EnergyBalanceInput) {
+    const input = plainToInstance(EnergyBalanceInput, rawInput);
+    const errors = await validate(input, { whitelist: true });
+    if (errors.length > 0) {
+      const messages = errors.flatMap((e) =>
+        Object.values(e.constraints ?? {}),
+      );
+      throw new BadRequestException(messages);
+    }
+
     if (new Date(input.startDate) > new Date(input.endDate)) {
       throw new BadRequestException('⚠️ Start date must be before end date.');
     }
+
     const data = await this.balanceService.getBalances({
       startDate: input.startDate,
       endDate: input.endDate,
@@ -25,8 +38,6 @@ export class EnergyBalanceResolver {
         '⚠️ No data found for the given date range.',
       );
     }
-
-    console.log('Data fetched from the database:', data.length);
 
     return data;
   }

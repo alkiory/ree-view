@@ -1,12 +1,17 @@
 import { useState } from 'react';
 import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
+import { C } from '../libs/design-tokens';
+
+/** Tipos canónicos de groupId; deben coincidir con la API de REE. */
+export type EnergyGroupId = 'Renovable' | 'No-Renovable';
 
 interface EnergyTypes {
-  [key: string]: { id: string; name: string }[];
+  Renovable: Array<{ id: string; name: string }>;
+  'No-Renovable': Array<{ id: string; name: string }>;
 }
 
-const energyGroups = [
+const energyGroups: ReadonlyArray<{ id: EnergyGroupId; name: string }> = [
   { id: 'Renovable', name: 'Renovable' },
   { id: 'No-Renovable', name: 'No renovable' },
 ];
@@ -18,7 +23,7 @@ const energyTypes: EnergyTypes = {
     { id: 'solar', name: 'Solar' },
     { id: 'termica', name: 'Termica' },
   ],
-  'No renovable': [
+  'No-Renovable': [
     { id: 'nuclear', name: 'Nuclear' },
     { id: 'carbon', name: 'Carbón' },
     { id: 'ciclo-combinado', name: 'Ciclo Combinado' },
@@ -27,27 +32,34 @@ const energyTypes: EnergyTypes = {
   ],
 };
 
+interface DataSelectorProps {
+  onDateChange: ({ start, end }: { start: string; end: string }) => void;
+  onGroupChange: (groupId: string | null) => void;
+  onTypeChange: (type: string | null) => void;
+}
+
 export default function DataSelector({
   onDateChange,
   onGroupChange,
   onTypeChange,
-}: {
-  onDateChange: ({ start, end }: { start: string; end: string }) => void;
-  onGroupChange: (groupId: string | null) => void;
-  onTypeChange: (type: string | null) => void;
-}) {
+}: DataSelectorProps) {
   const [startDate, setStartDate] = useState<Date>(new Date());
   const [endDate, setEndDate] = useState<Date>(new Date());
-  const [selectedGroup, setSelectedGroup] = useState<string | null>('');
-  const [selectedType, setSelectedType] = useState<string | null>('');
+  const [selectedGroup, setSelectedGroup] = useState<string>('');
+  const [selectedType, setSelectedType] = useState<string>('');
 
   const handleGroupChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedGroup(e.target.value);
-    setSelectedType(''); // Reset the type when the group changes
+    setSelectedType('');
   };
 
   const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedType(e.target.value);
+  };
+
+  const toGroupIdOrNull = (value: string): EnergyGroupId | null => {
+    if (value === 'Renovable' || value === 'No-Renovable') return value;
+    return null;
   };
 
   const handleApply = () => {
@@ -55,26 +67,40 @@ export default function DataSelector({
       start: startDate.toISOString().split('T')[0],
       end: endDate.toISOString().split('T')[0],
     });
-    onGroupChange(selectedGroup === '' ? null : selectedGroup);
+    onGroupChange(toGroupIdOrNull(selectedGroup));
     onTypeChange(selectedType === '' ? null : selectedType);
   };
 
   return (
-    <div className="data-selector bg-white p-4 rounded-lg shadow-md">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div>
-          <label className="block text-sm font-medium mb-1">Start Date</label>
+    <div
+      className="rounded-2xl border p-5 mb-6"
+      style={{ background: C.surface, borderColor: C.border }}
+      data-testid="data-selector"
+    >
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+        <div className="flex flex-col gap-1.5">
+          <label
+            className="text-[10.5px] font-medium uppercase tracking-wide"
+            style={{ color: C.muted }}
+          >
+            Fecha de inicio
+          </label>
           <DatePicker
             selected={startDate}
             onChange={(date: Date | null) => date && setStartDate(date)}
             selectsStart
             startDate={startDate}
             endDate={endDate}
-            className="border p-2 rounded w-full bg-slate-200"
+            dateFormat="dd/MM/yyyy"
           />
         </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">End Date</label>
+        <div className="flex flex-col gap-1.5">
+          <label
+            className="text-[10.5px] font-medium uppercase tracking-wide"
+            style={{ color: C.muted }}
+          >
+            Fecha de fin
+          </label>
           <DatePicker
             selected={endDate}
             onChange={(date: Date | null) => date && setEndDate(date)}
@@ -82,43 +108,72 @@ export default function DataSelector({
             startDate={startDate}
             endDate={endDate}
             minDate={startDate}
-            className="border p-2 rounded w-full bg-slate-200"
+            dateFormat="dd/MM/yyyy"
           />
         </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Group type</label>
+        <div className="flex flex-col gap-1.5">
+          <label
+            className="text-[10.5px] font-medium uppercase tracking-wide"
+            style={{ color: C.muted }}
+          >
+            Tipo de energía
+          </label>
           <select
             value={selectedGroup || ''}
             onChange={handleGroupChange}
-            className="border p-2 rounded w-full bg-slate-200"
+            className="w-full px-3 py-2 rounded-lg text-sm focus:outline-none"
+            style={{
+              background: C.surfaceAlt,
+              border: `1px solid ${C.border}`,
+              color: C.text,
+            }}
           >
-            <option value="">All</option>
+            <option value="">Todas</option>
             {energyGroups.map((group) => (
-              <option key={group.id} value={group.id}>{group.name}</option>
+              <option key={group.id} value={group.id}>
+                {group.name}
+              </option>
             ))}
           </select>
         </div>
-        <div>
-          <label className="block text-sm font-medium mb-1">Type</label>
+        <div className="flex flex-col gap-1.5">
+          <label
+            className="text-[10.5px] font-medium uppercase tracking-wide"
+            style={{ color: C.muted }}
+          >
+            Tecnología
+          </label>
           <select
             value={selectedType || undefined}
             onChange={handleTypeChange}
             disabled={!selectedGroup}
-            className={`border p-2 rounded w-full ${!selectedGroup ? 'bg-gray-300 cursor-help' : 'bg-slate-200'}`}
+            className="w-full px-3 py-2 rounded-lg text-sm focus:outline-none disabled:opacity-50"
+            style={{
+              background: C.surfaceAlt,
+              border: `1px solid ${C.border}`,
+              color: C.text,
+            }}
           >
-            <option value="">All</option>
-            {selectedGroup && energyTypes[selectedGroup]?.map((type) => (
-              <option key={type.id} value={type.id}>{type.name}</option>
-            ))}
+            <option value="">Todas</option>
+            {selectedGroup &&
+              energyTypes[selectedGroup as EnergyGroupId]?.map((type) => (
+                <option key={type.id} value={type.id}>
+                  {type.name}
+                </option>
+              ))}
           </select>
         </div>
       </div>
-      <button
-        onClick={handleApply}
-        className="mt-4 bg-blue-600 text-white py-2 px-4 rounded hover:bg-blue-700 transition"
-      >
-        Apply Filters
-      </button>
+      <div className="flex justify-end mt-4">
+        <button
+          type="button"
+          onClick={handleApply}
+          className="px-4 py-2 rounded-lg text-sm font-semibold transition-opacity hover:opacity-90"
+          style={{ background: C.renewable, color: C.textOnRenewable }}
+        >
+          Aplicar filtros
+        </button>
+      </div>
     </div>
   );
 }

@@ -10,7 +10,7 @@ import { ReeClientService } from './ree-client.service';
 
 @Injectable()
 export class EnergyBalanceService {
-  private readonly logger = new Logger(ReeClientService.name);
+  private readonly logger = new Logger(EnergyBalanceService.name);
   constructor(
     @InjectModel(EnergyBalance.name)
     private readonly balanceModel: Model<EnergyBalance>,
@@ -59,16 +59,8 @@ export class EnergyBalanceService {
     type?: string;
     groupType?: string;
   }) {
-    this.logger.log(
-      `[1] Received params: \n startData:${startDate} endDate:${endDate}`,
-    );
-
     const start = new Date(`${startDate}T00:00:00Z`);
     const end = new Date(`${endDate}T23:59:59Z`);
-
-    this.logger.log(
-      `[2] Converted to Date: \n startData:${start} endDate:${end}`,
-    );
 
     await this.fetchMissingData({ start, end });
 
@@ -77,17 +69,10 @@ export class EnergyBalanceService {
       endDate: { $lte: end },
       ...(groupId && { groupId }),
       ...(type && { type }),
+      ...(groupType && { 'attributes.groupType': groupType }),
     };
 
-    this.logger.log(`[3] Query MongoDB: ${JSON.stringify(query)}`);
-
-    if (groupId) query.groupId = groupId;
-    if (type) query.type = type;
-    if (groupType) query.groupType = groupType;
-
     const data = await this.balanceModel.find(query).exec();
-    this.logger.log(`[4] Data obtained from MongoDB: ${data.length}`);
-
     return data;
   }
 }

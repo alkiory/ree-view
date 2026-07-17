@@ -17,6 +17,10 @@ describe('EnergyBalanceService', () => {
         {
           provide: getModelToken(EnergyBalance.name),
           useValue: {
+            // El servicio llama `exists(...)` antes de `find(...)`.
+            // El mock original sólo tenía find/insertMany y dejaba
+            // el test roto. Lo ampliamos para reflejar el contrato real.
+            exists: jest.fn(),
             find: jest.fn(),
             insertMany: jest.fn(),
           },
@@ -48,6 +52,10 @@ describe('EnergyBalanceService', () => {
         },
       ];
 
+      // exists() devuelve un doc → el servicio NO llama a REE
+      jest
+        .spyOn(balanceModel, 'exists')
+        .mockResolvedValue({ _id: 'cached' } as any);
       jest.spyOn(balanceModel, 'find').mockReturnValue({
         exec: jest.fn().mockResolvedValue(mockData),
       } as any);
@@ -62,6 +70,8 @@ describe('EnergyBalanceService', () => {
     });
 
     it('should fetch and save missing data', async () => {
+      // exists() devuelve null → el servicio SÍ llama a REE
+      jest.spyOn(balanceModel, 'exists').mockResolvedValue(null as any);
       jest.spyOn(balanceModel, 'find').mockReturnValue({
         exec: jest.fn().mockResolvedValue([]),
       } as any);

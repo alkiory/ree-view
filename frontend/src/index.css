@@ -1,23 +1,172 @@
 @import "tailwindcss";
 
+/* Fonts cargados vía <link rel="preconnect"> + <link rel="stylesheet"> en index.html
+   para evitar el FOUC que produciría el @import de CSS (que bloquea hasta que
+   stylesheet raíz termine de descargarse). */
+
+/* Dark theme (default). */
 :root {
+  /* Neutrals */
+  --c-bg: #0a0f1c;
+  --c-surface: #101828;
+  --c-surface-alt: #0d1420;
+  --c-border: #1e2a42;
+  --c-text: #eaf0fb;
+  --c-muted: #7c8ba6;
+
+  /* Semantic families */
+  --c-renewable: #34d399;
+  --c-renewable-dim: #1f5a46;
+  --c-non-renewable: #8b5cf6;
+  --c-non-renewable-dim: #3d2b66;
+
+  /* Libre accents */
+  --c-accent-pink: #ff3d77;
+  --c-accent-purple: #8b5cf6;
+  --c-accent-cyan: #22d3ee;
+  --c-accent-gold: #ffc93c;
+  --c-accent-orange: #ff8a3d;
+
+  /* Status / context */
+  --c-live: #22d3ee;
+  --c-danger: #ff3d77;
+
+  /* text-on-color complements (for chips/badges on bright backgrounds) */
+  --c-text-on-danger: #1a0606;
+  --c-text-on-renewable: #062017;
+  --c-text-on-live: #04222f;
+
+  /* Alpha tokens via color-mix — soporte para `${C.X}NN` template patterns,
+     tema-reactivos automáticamente. */
+  --c-muted-soft: color-mix(in srgb, var(--c-muted) 10%, transparent);
+  --c-muted-pill: color-mix(in srgb, var(--c-muted) 15%, transparent);
+  --c-live-soft: color-mix(in srgb, var(--c-live) 10%, transparent);
+  --c-accent-gold-soft: color-mix(in srgb, var(--c-accent-gold) 8%, transparent);
+  --c-accent-gold-faint: color-mix(in srgb, var(--c-accent-gold) 5%, transparent);
+  --c-accent-gold-pill: color-mix(in srgb, var(--c-accent-gold) 15%, transparent);
+  --c-accent-gold-edge: color-mix(in srgb, var(--c-accent-gold) 33%, transparent);
+
   --tw-bg-opacity: 1;
   --tw-text-opacity: 1;
-  background-color: #291d3d;
+
+  background-color: var(--c-bg);
+  color: var(--c-text);
+  font-family: "Inter", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-.dashboard {
-  @apply p-6 h-screen flex flex-col items-center;
+/* Light theme: variants darken live/danger/renewable/nonRenewable for
+   WCAG AA contrast over light backgrounds. */
+:root[data-theme="light"] {
+  --c-bg: #f4f6fa;
+  --c-surface: #ffffff;
+  --c-surface-alt: #eef1f6;
+  --c-border: #e1e5ee;
+  --c-text: #0f172a;
+  --c-muted: #64748b;
+
+  --c-renewable: #059669;
+  --c-renewable-dim: #d1fae5;
+  --c-non-renewable: #7c3aed;
+  --c-non-renewable-dim: #ede9fe;
+
+  --c-accent-pink: #dc2626;
+  --c-accent-purple: #7c3aed;
+  --c-accent-cyan: #0891b2;
+  --c-accent-gold: #d97706;
+  --c-accent-orange: #ea580c;
+
+  --c-live: #0891b2;
+  --c-danger: #dc2626;
+
+  /* text-on-color: blanco puro sobre los fondos semánticos oscurecidos
+     (todos los pares superaban WCAG AA 4.5:1). */
+  --c-text-on-danger: #ffffff;
+  --c-text-on-renewable: #ffffff;
+  --c-text-on-live: #ffffff;
 }
 
-.data-selector {
-  @apply bg-slate-300 p-6 rounded-lg shadow-md;
+html,
+body,
+#root {
+  min-height: 100%;
 }
 
-.energy-chart {
-  @apply bg-slate-300 p-4 rounded-lg shadow-md;
+body {
+  background-color: var(--c-bg);
+  color: var(--c-text);
+  margin: 0;
 }
 
+/* Pulso animado del indicador `EN VIVO` en Datos en tiempo real. */
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(1.35);
+  }
+}
+
+.pulse-dot::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: var(--c-live);
+  animation: pulseDot 1.8s ease-in-out infinite;
+}
+
+/* Loading spinner enmascarado al paleta live. */
 .loading-spinner {
-  @apply animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500;
+  @apply animate-spin rounded-full h-12 w-12 border-t-2 border-b-2;
+  border-color: var(--c-live);
+}
+
+/* Overrides de react-datepicker para tema oscuro (selector fechas). */
+.react-datepicker-wrapper input,
+.react-datepicker__input-container input {
+  background-color: var(--c-surface-alt) !important;
+  color: var(--c-text) !important;
+  border: 1px solid var(--c-border) !important;
+  padding: 0.5rem 0.75rem !important;
+  border-radius: 0.5rem !important;
+  width: 100% !important;
+}
+
+.react-datepicker {
+  background-color: var(--c-surface) !important;
+  border: 1px solid var(--c-border) !important;
+  color: var(--c-text) !important;
+  font-family: "Inter", sans-serif !important;
+}
+
+.react-datepicker__header {
+  background-color: var(--c-surface-alt) !important;
+  border-bottom: 1px solid var(--c-border) !important;
+}
+
+.react-datepicker__current-month,
+.react-datepicker__day-name,
+.react-datepicker__day {
+  color: var(--c-text) !important;
+}
+
+.react-datepicker__day:hover {
+  background-color: var(--c-border) !important;
+}
+
+.react-datepicker__day--selected,
+.react-datepicker__day--in-selecting-range,
+.react-datepicker__day--in-range {
+  background-color: var(--c-live) !important;
+  color: var(--c-bg) !important;
+}
+
+.react-datepicker__triangle {
+  display: none;
 }

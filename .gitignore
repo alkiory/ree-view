@@ -1,2 +1,100 @@
-.qodo
+# =============================================================================
+# Root .gitignore — Catch-all safety net
+# -----------------------------------------------------------------------------
+# `backend/.gitignore` y `frontend/.gitignore` cubren el grueso de su
+# sub-árbol. Este archivo agrega:
+#   • Patrones cross-subdir por si una herramienta genera artefactos donde
+#     no había gitignore propio (e.g., un `node_modules/` que aparezca a
+#     raíz durante un `pnpm install` mal apuntado).
+#   • IDEs / editors con state global.
+#   • Working memory del agente: SOLO el delta de la última sesión NO
+#     entra al repo (agent-summary.md); el CURRENT.md acumulado SÍ.
+# =============================================================================
+
+# --- OS junk ---
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- Backup / swap / temp / merge conflict leftovers ---
+*.swp
+*.swo
+*.bak
+*.tmp
+*~
+.~lock.*
+*.orig
+*.rej
+
+# --- Node / pnpm / npm defensivo (coverage cross-subdir) ---
+**/node_modules/
+**/.pnp.*
+**/.pnp.js
+
+# --- Build artifacts (cualquier subdir sin gitignore propio) ---
+**/dist/
+**/build/
+**/.next/
+**/.nuxt/
+**/out/
+
+# --- Coverage / test artifacts ---
+**/coverage/
+**/.nyc_output/
+**/*.lcov
+
+# --- Logs ---
+**/*.log
+**/logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# --- TypeScript incremental build cache ---
+**/*.tsbuildinfo
+
+# --- Environments (.env → NO committed, .env.example → SÍ) ---
 .env
+.env.local
+.env.*.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+!**/.env.example
+!**/*.env.example
+
+# --- Editors / IDEs ---
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+*.iml
+
+# --- Working memory del agente (per-session) ---
+# `agent-memory/CURRENT.md` ES project memory → tracked.
+# `agent-summary.md` (root) es el delta de la ÚLTIMA sesión → NO tracked.
+agent-summary.md
+agent-summary.*.md
+
+# --- Docker / compose noise ---
+**/.docker/
+**/docker-compose.override.yml
+**/docker-compose.*.yml
+!docker-compose.yml
+
+# --- Misc build caches ---
+**/.cache/
+**/.parcel-cache/
+**/.rollup.cache/
+**/.turbo/
+**/.tsserver/
