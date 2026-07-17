@@ -854,6 +854,659 @@ El cambio a `formatDate` con getters locales significa que el día que REE inter
 
 **Premio "Least Surprising": §3.31 ↔ §3.33 thread continuity**: §3.31 introdujo `getHistoricalHourlySnapshot` (resilience Tier-2) con helpers `_historicalHourlyParams` que dependían de `.toISOString()` como parte del contrato. §3.33 cierra el ciclo corrigiendo los helpers para que el rango histórico cubra EXACTAMENTE las 24h del día local, sin dependence de TZ-shift accidental. Future agent que toque `_historicalHourlyParams` o `_liveDateRangeParams` debe leer §3.33 ANTES para entender el contrato isStart=true/false aplicado a `start` vs `tomorrow`.
 
+### §3.34 Opción C — Historical fallback rediseñado (`balance/balance-electrico` 1 punto/día) + eliminación del mock sintético
+
+**POR QUÉ este turn** (cierre de la investigación "Invalid historical response: empty content"):
+El usuario pidió investigar la causa raíz de por qué `getHistoricalHourlySnapshot` devolvia `Invalid historical response: empty content for nacional on <fecha>` con datos inexistentes aún para fechas pasadas. La investigación (probe curl ground-truth contra `apidatos.ree.es`) confirmó que el endpoint `demanda/demanda-tiempo-real` es estructuralmente `sliding-window live-only`: pasa fechas pasadas → `200 OK + content=[]` consistente. Slugs hermanos (`demanda-prevista`, `evolucion-demanda`, `demanda-real`) → 500 HTML Symfony (slugs no vigentes en el API público). La única ruta que SÍ rinde datos históricos públicos es `balance/balance-electrico?time_trunc=day` (1 valor agregado/día por grupo: Renovable / No-Renovable / Almacenamiento / Demanda).
+
+**Decisión Opción C** (vs A+B mock-gated): el usuario rechazó el mock silencioso por mandato **"0 números inventados en cualquier entorno"**. Las opciones A (eliminar fallback), B (mock gated por env var) son inferiores a C (mostrar último valor real) porque C preserva la promesa del proyecto **"100% datos reales de REE"** sin sacrificar UX cuando el upstream está parcialmente caído. El saldo: el frontend ahora muestra un KPI estático en lugar de un gráfico de 24 puntos cuando recibe histórico, y un ErrorBox inline honesto (no un chip DEMO + synthética) cuando ambos fallan.
+
+**Cambios aplicados**:
+
+- **Backend `ree-client.service.ts`** — `fetchHistoricalHourly` ahora pega contra `balance/balance-electrico` (pathSuffix cambiado de `demanda/demanda-tiempo-real`). `_historicalHourlyParams` actualizado: `time_trunc=day` + `cached=true`. Mantiene `start_date=YYYY-MM-DD 00:00` / `end_date=YYYY-MM-DD 23:59` del MISMO día local (idempotente cross-TZ). Extractor: filtra `type === 'Demanda' || id === 'Demanda'` dentro de `included[]` de 4 grupos (Renovable / No-Renovable / Almacenamiento / Demanda), devuelve 1 elemento `[{ h: '24h', real: value, prevista: value }]`. La etiqueta `24h` es convención del cierre del día y permite al frontend detectar `curve.length < 2` para sustituir el AreaChart por el KPI estático. `prevista=real` sigue como placeholder porque el forecast endpoint sigue siendo #21 outstanding.
+- **Backend `live-demand.service.ts`** — `regionCacheKey` bug fix: antes sólo capitalizaba primera letra del input UPPERCASE (`'PENINSULAR' → 'PENINSULAR'`), ahora baja a lowercase primero (`'PENINSULAR' → 'peninsular' → 'Peninsular'`). `getHistoricalHourlySnapshot` docstring actualizado al shape 1-punto (Opción C).
+- **Frontend `useLiveDemand.ts`** — **ELIMINADOS** `DEMO_CURVE` (constante 24 puntos sintéticos) + `buildMockLiveDemand()` (helper). Sección de doc con explicación del porqué + nota para reintroducir bajo `VITE_ENABLE_MOCK_FALLBACK` si un dev QUIERE offline dev en el futuro (decisión fuera del scope §3.34).
+- **Frontend `live-demand-card.tsx`** — `Mode` union: `'mock' → 'unavailable'`. Records (`CAPTION_FOR_MODE`, `COLOR_FOR_MODE`, `GRADIENT_ID_FOR_MODE`) actualizados, exhaustividad garantizada en compile-time. `deriveMode` retorna `'unavailable'` cuando live-degraded + historical-devuelve vacío o no-match. `Chip({mode})`: branch `'mock'` (DEMO gold) reemplazado por branch `'unavailable'` (NO DISPONIBLE danger, con dot rojo). Bloque del chart: añade ramificación intermedia para `mode === 'unavailable'` con `<button>` Reintentar. Branch del AreaChart cambia de `(length === 0 ? 'Sin curva')` a `(length >= 2 ? AreaChart : <StaticDemandKPI>)`. NUEVO sub-componente `<StaticDemandKPI>`: bloque 240px (mismo alto que el chart para evitar CLS) con label uppercase `ÜLTIMA DEMANDA DIARIA CONOCIDA`, valor 40px monospace, fecha+region, footnote `apiDatos REE · balance eléctrico diario`. Maneja edge case `curve.length === 0` con `—` (NO `0.0 GW` inventado). Legend `Demanda real` + footer attribution: ternarios `mode === "mock" ? gold : cyan` reemplazados por `mode === "historical" ? muted : cyan`. Stale comments en 3 lugares actualizados (§3.32 → §3.34, `'mock' → 'unavailable'`, docstring del body omite `buildMockLiveDemand`).
+
+**Tests** (Vitest count sube de **39 → 45** backend + 27 frontend = **72 totales**, 6 nuevos netos: 4 ree-client + 2 live-demand):
+
+- **Backend `ree-client.service.spec.ts`** — sección `fetchHistoricalHourly (Opción C §3.34)` con 8 tests (4 preservados/actualizados de Fix A+B + 4 nuevos):
+  - `A1`: error message contiene `dateStr` verbatim (Fix A preservado).
+  - `A1b`: error message incluye region cuando geo_limit provisto.
+  - `C1`: extractor filtra group Demanda → 1 elemento `{h:'24h', real, prevista}` (ignora los otros 3 grupos).
+  - `C2`: throw same error cuando group Demanda ausente de `included` (runbook keyword stability).
+  - `C3`: throw diferenciado cuando value de Demanda group no es número (`typeof !== 'number'` o NaN).
+  - `C4`: omite `geo_limit` cuando region ausente; pasa kebab-lowercase cuando provisto.
+  - `B1`: paráms con getters locales + `time_trunc=day` + `cached=true`.
+  - `B2`: idempotente cross-TZ del runner.
+- **Backend `live-demand.service.spec.ts`** — sección `getHistoricalHourlySnapshot (Fix A propagation + Opción C shape)`:
+  - `A3`: propagación del DTO date string al `InternalServerErrorException` envuelto (preservado).
+  - `C4`: happy-path con 1-punto `[{h:'24h', real:33000, prevista:33000}]` + region display `'Peninsular'` (lock-in del `regionCacheKey` fix) + verificación kebab-lowercase passthrough al ree-client.
+  - `C5`: error `Failed to compute historical snapshot (date=..., region=...)` envuelto cuando histórico devuelve empty content.
+
+**Verificaciones pasadas**:
+- Backend `pnpm build` → success (exit 0).
+- Backend vitest → **45/45** tests pasando en 3 files.
+- Frontend `pnpm build` (`tsc -b && vite build`) → success (warning informativo chunk size, pre-existente).
+- Frontend lint → 0 errors, 1 warning pre-existente (vite.config.ts eslint-disable unused).
+- Frontend vitest → **27/27** tests pasando en 2 files.
+- (Último round de fix-ups hubo buld error en map callback con type annotation typo + 4 stale `mode === "mock"` refs + `?? 0` masking NaN semantics + `regionCacheKey` no lowercase-then-capitalize — todos resueltos con verificación pasando.)
+
+**No-goals** (decisiones explícitas fuera del scope §3.34):
+
+- ❌ No añadir cache para `getHistoricalHourlySnapshot` (TTL 24h). Pendiente; agregaría una collection `LiveDemandHistorical` keyed por `(region, date)`.
+- ❌ No reintroducir forecast endpoint (issue #21 outstanding). `prevista=real` se mantiene como placeholder.
+- ❌ No añadir env var `VITE_ENABLE_MOCK_FALLBACK` con default `false` aunque algunos devs podrían beneficiarse offline — decisión explícita del usuario "0 inventado en cualquier entorno".
+
+**Bitácora / follow-up §3.35+**:
+
+- [ ] Smoke test runtime contra `apidatos.ree.es` con la URL exacta de balance-electrico — confirmar que REE no introduce slugs nuevos o cambios en el discriminator del grupo Demanda. Actualizar `type === 'Demanda' || id === 'Demanda'` si REE cambia.
+- [ ] Considerar cache histórico en collection separada (`LiveDemandHistorical` keyed por `(region, date)`) si el path degraded se vuelve hot. Monitorear logs primero.
+- [ ] Long-lived tab: `dateYesterday` se computa por render en `<LiveDemandCardBody>` (no `useMemo`). Una sesión que cruce medianoche podría mostrar fecha stale. Future: `useMemo` + `useEffect` ticking a medianoche local.
+- [ ] Reader-thread continuity: §3.31 ↔ §3.33 ↔ §3.34 cuentan la historia completa del resilience Tier-2 historical fallback. Future agent que toque `_historicalHourlyParams` o `<StaticDemandKPI>` debe leer §3.33 + §3.34 en orden cronológico inverso.
+
+**Cross-references**:
+
+- §3.33 — predecesor inmediato: TZ correctness en `formatDate` + Fix A dateStr propagation. Algunos errores que §3.34 ya no dispara (`Invalid historical response: empty content` con fecha UTC-shifted) eran síntoma del bug Fix A que §3.33 cerró. La raíz histórica vacía REAL (sliding-window live-only) es la que §3.34 ataca.
+- §3.32 — predecesor que introdujo `buildMockLiveDemand()` ahora eliminado. La evidencia de §3.32 sobre por qué un chip "DEMO" silencioso es insuficiente es la base del rechazo del usuario en §3.34.
+- §3.27 — `Promise.allSettled` live resilience: el mode `'unavailable'` que §3.34 introduce es la contraparte natural para cuando live está completamente degradado y el histórico tampoco rinde. La cadena es: §3.27 degrada → §3.31 cache hit → §3.32 mock fallback (eliminado en §3.34) → §3.33 fix TZ bug → §3.34 real-data historical fallback.
+
+### §3.35 Historical cache TTL 24h (collection `LiveDemandHistorical`) — cache-aside v1 para `getHistoricalHourlySnapshot`
+
+**POR QUÉ este turn** (cierre del follow-up §3.34 bitácora):
+El §3.34 ya rinde histórico real de REE vía `balance/balance-electrico`, pero cada poll del frontend al resolver disparaba un fetch nuevo a REE aunque los datos del día pedido son inmutables. Con el `pollInterval: 60000` del `useHistoricalHourly` hook (§3.31), un usuario activo con tab abierta durante una hora generaba 60 fetches idénticos. REE upstream no penaliza específicamente, pero el cache TTL 24h es una victoria barata: histórico inmutable × frecuencia de poll = desperdicio innecesario.
+
+**Decisión arquitectónica** (thinker validada):
+- Schema paralelo `LiveDemandHistorical` (NO reusar `LiveDemand`) — ver rationale detallado en `schemas/live-demand-historical.schema.ts:POR QUÉ schema separado`. Las razones top: (a) cache keys estructuralmente distintos (region-only vs `(region, date)` UNIQUE), (b) TTL policies opuestas (60s live vs 24h historical), (c) shapes `curve` distintos (24 puntos live vs 1 punto Opción C), (d) región como cacheKey display compartido con `LiveDemand.region` (no flip-flop cross-collection).
+- Region storage: cacheKey display (`'Nacional'`, `'Peninsular'`, etc.) — MISMO shape que `LiveDemand.region`. Reuso de `regionCacheKey()` del service sin helpers nuevos.
+- Date storage: String `'YYYY-MM-DD'` — pass-through verbatim del input DTO (preserva Fix A §3.33 contract), zero TZ-drift entre Node/Mongo/GraphQL.
+- Composite unique index `{region: 1, date: 1}` named `historical_region_date_unique` — anti-duplicate-race: dos requests concurrentes al mismo key con cache miss no pueden crear 2 docs paralelos.
+- TTL index `{createdAt: 1}` con `expireAfterSeconds: 86400` named `historical_ttl_24h` — REE balance-electrico rinde histórico inmutable, cache 24h es safe. Env override `HISTORICAL_CACHE_TTL_SECONDS` (caveat: module-load capture, restart-requerido para cambiar).
+- Atomic upsert via `findOneAndUpdate({region, date}, {$set: snapshot}, {upsert: true, new: true})` — mismo patrón que `LiveDemand`. Concurrent races son idempotentes (last-write-wins); single-flight NO se implementa en v1.
+
+**Cambios aplicados**:
+
+- **Backend `schemas/live-demand-historical.schema.ts`** (new file) — `@Schema({timestamps: true})` con campos: `region: string` (default 'Nacional'), `date: string`, `currentDemandMW`, `maxForecastMW`, `minTodayMW`, `renewablePercentageValue`, `timestamp: Date`, `curve: [{h, real, prevista}]`. Índices declarados via `SchemaFactory.createForClass(...).index(...)`: (a) UNIQUE compound `{region: 1, date: 1}` con name `historical_region_date_unique` para anti-duplicate-race, (b) TTL `{createdAt: 1}` con `expireAfterSeconds: 86_400` (env-overridable) y name `historical_ttl_24h`. La doc al tope explica POR QUÉ schema separado y por qué string-Date over Date-instance.
+- **Backend `energy-balance.module.ts`** — añadido `{name: LiveDemandHistorical.name, schema: LiveDemandHistoricalSchema}` a `MongooseModule.forFeature([...])`. Schema vive en el mismo módulo (footprint mínimo, sin necesidad de `EnergyBalanceHistoricalModule` separado).
+- **Backend `services/live-demand.service.ts`** — import de `LiveDemandHistorical` + `@InjectModel(LiveDemandHistorical.name) private readonly historicalModel: Model<LiveDemandHistorical>`. `getHistoricalHourlySnapshot` ahora sigue cache-aside v1: (1) cache lookup `findOne({region: cacheKey, date}).lean().exec()`, (2) cache hit → return `shape(cached)` (log `↻ Historical cache hit`), (3) cache miss → fetch `reeClient.fetchHistoricalHourly` (Opción C §3.34: `balance/balance-electrico?time_trunc=day`, 1 punto agregado), (4) `findOneAndUpdate({region, date}, {$set: snapshot}, {upsert: true, new: true})` (log `↻ Historical hourly cached`), (5) return `shape(snapshot)`. Errors NO se cachean — re-throw via `InternalServerErrorException` para que el siguiente caller re-intente. El snapshot interno incluye `date: string` como internal-only field para round-trip en el upsert; `shape()` lo ignora en el return público (no expone al GraphQL).
+- **Backend `services/__tests__/live-demand.service.spec.ts`** — añadido import `LiveDemandHistorical` + mock `getModelToken(LiveDemandHistorical.name)` con `findOne().lean().exec()` default null + `findOneAndUpdate` default `{}`. 3 nuevos tests:
+  - `H1`: cache hit → 0 calls a REE + 0 upserts + devuelve shape del doc cacheado.
+  - `H2`: cache miss → 1 fetch + 1 upsert con filter `{region: 'Peninsular', date: '2026-07-15'}` y options `{upsert: true, new: true}` exactos.
+  - `H3`: error de REE propaga sin cachear (0 upserts cuando `reeClient.fetchHistoricalHourly` rechaza).
+
+**Tests** (Vitest count sube de **45 → 48** backend, 3 nuevos netos):
+
+- Backend `ree-client.service.spec.ts`: 22 tests, sin cambios (§3.34 baseline).
+- Backend `live-demand.service.spec.ts`: 8 nuevos tests en `getHistoricalHourlySnapshot` describe (A3 + C4 + C5 preserved post-§3.34 + H1 + H2 + H3 nuevos). Los pre-existentes (A3, C4, C5) **continúan pasando** porque el default mock de `historicalModel.findOne` resuelve null (cache miss path), por lo que las assertions sobre el behavior del fetch path siguen siendo válidas.
+- Backend `energy-balance.service.spec.ts` y otros: 18 tests, sin cambios.
+
+**Verificaciones pasadas**:
+- Backend `pnpm build` → exit 0.
+- Backend vitest → **48/48** tests pasando en 3 files.
+- Frontend (no tocado en §3.35): build OK + vitest 27/27 OK + lint 0 errors (pre-§3.35 baseline verified).
+
+**Code-review feedback** (sub-agent code-reviewer-minimax-m3):
+- 1 BLOCKING: ninguno.
+- 4 CONCERN (todos cosméticos o polish):
+  - `HISTORICAL_CACHE_TTL_SECONDS` se captura al module-load (no hot-rebindable). Caveat añadido a la docstring del schema con instrucciones para `collMod` (CONCERN #1, aplicado en este turn).
+  - El `snapshot` object literal no tiene type annotation (TS no valida `date: string` matches schema). Runtime works via Mongoose write validation. Minor polish para v2.
+  - Sin unit test explícito de `shape()` con doc histórico que tenga `date` field. H1 cubre el path end-to-end pero no afirma explícitamente que `result` no tiene `date`. Polish.
+  - Cache-lookup error vs REE error usan el mismo wrapper message. `cause` preserva el real error, suficiente para debug. Differentiación en §3.36 si se quiere más log hygiene.
+
+**No-goals** (decisiones explícitas fuera del scope §3.35):
+- ❌ NO implementar single-flight in-process pending-requests map (riesgo: thrash concurrente de N requests al mismo key → N fetches → upsert idempotente last-write-wins). El throttler global (§3.26) provee backstop suficiente.
+- ❌ NO cachear errores (si REE 4xx/5xx, re-throw). Re-fetch storm es tolerable; cachear error stale 24h sería peor UX (usuario stuck con error cuando upstream ya rectificó).
+- ❌ NO migrar `LiveDemand` (live cache) a esta API. Schema paralelo por diseño (ver schema POR QUÉ).
+- ❌ NO rate-limit deltas entre retries idénticos empty-content (graveyard concern §3.34). Sin lock-in para v1.
+
+**Bitácora / follow-up §3.36+**:
+
+- [ ] Smoke test runtime contra `apidatos.ree.es` para validar que el composite cache key (`region`, `date`) sigue siendo semánticamente correcto tras cambios upstream. Si REE restructura el payload, ambos índices (único y TTL) siguen sirviendo.
+- [ ] Considerar agregar un `collMod`-friendly TTL helper script (`scripts/set-ttl.ts`) que permita cambiar `HISTORICAL_CACHE_TTL_SECONDS` en caliente sin restart manual del backend.
+- [ ] Considerar migrar `liveDemand.region` (legacy post-§3.31) de kebab-display a kebab-lowercase para consistencia cross-collection con `liveDemandHistorical.region`. Trade-off: backwards compat con clients existentes. Future si se observa drift en queries.
+- [ ] In-process single-flight map en `LiveDemandService.getHistoricalHourlySnapshot` si el path degraded se vuelve hot (monitorear logs `↻ Historical cache miss` rate). Hoy el throttler es suficiente.
+- [ ] Unit test explícito de `shape(doc)` con doc histórico que tiene `date` field (asegura que el `date` interno no leak al GraphQL response). Polish.
+- [ ] Cache-lookup error wrapper diferenciado (e.g. `Failed to lookup historical cache`) para mejorar log hygiene. Out of scope v1.
+
+**Cross-references**:
+
+- §3.34 — predecesor inmediato: estableció que `getHistoricalHourlySnapshot` rinde 1 valor agregado/día vía `balance/balance-electrico?time_trunc=day`. §3.35 añade el cache para evitar refetch por poll. El cambio mínimo: añadir `findOne` antes del fetch + `findOneAndUpdate` después, sin alterar el shape público del resolver.
+- §3.31 — `LiveDemand` live cache pattern. §3.35 replica el mismo cache-aside pero con composite key + TTL distinto. La doc `LiveDemand` en `schemas/live-demand.schema.ts:POR QUÉ schema separado` documenta los paralelos estructurales.
+- §3.27 — `Promise.allSettled` live resilience: cuando live degraded, el resolver histórico entra en juego (§3.31) + ahora cacheado (§3.35). Reducción dramática de carga upstream para sesiones prolongadas con live degraded.
+
+### §3.36 Phase 2 §3.36 — Revert completo del live-demand REE → MockLiveDemandCard (decisión del usuario)
+
+**Origen**: el usuario decide pivotar. La sesión §3.31–§3.35 había invertido esfuerzo importante en cache histórico (TTL 24h con composite key `(region, date)`), pero la causa raíz confirmada era que REE apiDatos NO expone un endpoint sliding-window real para `demanda-tiempo-real`: cualquier GET del día en curso devuelve `200 OK + content=[]` (sliding-window empty payload) y solo `balance/balance-electrico?time_trunc=day` devuelve 1 punto/día agregado — útil para KPI pero NO para curva 24h. Inviabilidad operativa confirmada por probe directo.
+
+**Decisión del usuario (verbatim)**: "Olvidemos el tema del 'Datos en tiempo real', mas bien hagamos un mock como se resolvió en reporte-post-stack.md. Si hay que eliminar los archivos de live demand entonces quitemoslo y todo lo relacionado, prefiero mostrar un mock que llamar a una api que no existe o que nos de una respuesta siempre erronea."
+
+**Por qué revert COMPLETO (no solo disable)**: mantener código muerto (schemas/registros/resolvers sin uso) ocupa bundle JS de Nest + confunde al agente próximo que vea `LiveDemandService` en una búsqueda y crea que existe integración real. `git log` mantiene el historial para auditoría — el código eliminado es recuperable vía `git revert` si en el futuro cambia la decisión.
+
+**Archivos eliminados (10)**:
+
+Backend (7):
+- `backend/src/energy-balance/services/live-demand.service.ts` (incl. cache-aside §3.35 + H1/H2/H3 specs)
+- `backend/src/energy-balance/services/__tests__/live-demand.service.spec.ts`
+- `backend/src/energy-balance/schemas/live-demand.schema.ts`
+- `backend/src/energy-balance/schemas/live-demand-historical.schema.ts` (§3.35 NEW)
+- `backend/src/energy-balance/dto/live-demand.type.ts`
+- `backend/src/energy-balance/dto/live-demand.input.ts`
+- `backend/src/energy-balance/resolvers/live-demand.resolver.ts`
+
+Frontend (3):
+- `frontend/src/hooks/useLiveDemand.ts` (incl. `isDegradedSnapshot`, race-fix region match §3.31)
+- `frontend/src/components/cards/live-demand-card.tsx` (incl. `<RegionPills>` funcional, historical fallback chip)
+- `frontend/src/queries/live-demand.query.ts` (incl. `GET_LIVE_DEMAND` + `GET_HISTORICAL_HOURLY`)
+
+**Archivos modificados (5)**:
+
+1. **`backend/src/energy-balance/energy-balance.module.ts`** — drop `LiveDemand.name`, `LiveDemandHistorical.name` de `MongooseModule.forFeature`. Drop `LiveDemandService`, `LiveDemandResolver` de `providers`. Exporta solo `EnergyBalanceService` + `ReeClientService` + `FronteraService`. Module footprint -3 schemas, -2 providers.
+
+2. **`backend/src/energy-balance/services/ree-client.service.ts`** — trim: drop `LIVE_API` env var, drop `callLiveEndpoint`, drop `_liveDateRangeParams`, drop `fetchLiveEndpoint` family (3 fetch methods + 1 historical). Quedan 3 fetches: `fetchEnergyBalance`, `fetchFronteras`, `fetchBalanceElectrico`. Constructor guard (`§3.18`) preserva lógica fail-fast + accepta solo `REE_API_URL` + `REE_FRONTERAS_API_URL`.
+
+3. **`backend/src/energy-balance/services/__tests__/ree-client.service.spec.ts`** — trim: drop `describe(fetchHistoricalHourly)` block + setup de `REE_LIVE_API_URL` en beforeEach/afterEach. Core specs del constructor guard + 3 fetches intactos. Test count: 41 → 29 (drop 12 specs en 4 describe blocks).
+
+4. **`frontend/src/App.tsx`** — `import MockLiveDemandCard from "./components/cards/mock-live-demand-card";` + `<MockLiveDemandCard />` como JSX sibling, renderizado ANTES de `<EnergyChart ... />`.
+
+5. **`backend/.env.example`** — drop del comentario `# Endpoint base para la sección «Datos en tiempo real»` + var `REE_LIVE_API_URL=https://apidatos.ree.es/es/datos`. Conserva `REE_API_URL` + `REE_FRONTERAS_API_URL` + `MAX_DATE_RANGE_DAYS`.
+
+**Archivo nuevo (1)**:
+
+`frontend/src/components/cards/mock-live-demand-card.tsx` — implementación estática que reutiliza primitivos existentes (`Card`, `SectionLabel`, `Radio` icon, `Sparkline`) + tokens existentes (`C.live`, `C.danger`, `C.renewable`, `C.muted`, `C.text`, `C.border`):
+
+- **Header**: `<SectionLabel icon={Radio}>Demanda en tiempo real</SectionLabel>` + chip ⚠️ **Mock** con `${C.danger}1A` bg + `${C.danger}40` border + `title="Estos datos son un mock puramente visual. No provienen de REE."` + `data-testid="mock-live-demand-card-chip"`.
+- **Body principal**: número grande `32.450 MW` con timestamp fijo `mock-2026-10-15 14:30` (prefijo `mock-` lo hace inequívocamente ficticio). Color de número = `C.live`.
+- **Sparkline inline**: `<Sparkline data={SPARK_SYNTHETIC.demand} color={C.live} height={45} />` — 10 puntos sintéticos del token `SPARK_SYNTHETIC.demand` ya existente en `design-tokens.ts`.
+- **Footer grid 3-col**: "Tendencia (synth): Estable" | "Pico del día (mock): 35.120 MW" | "Cuota Renovable: 48.2%" — los 3 valores plausible pero inequívocamente MOCK en el label de 2 de ellos.
+
+**Por qué el prefijo `mock-` en el timestamp** (no `toLocaleString()`): 1) reproducibilidad entre sesiones/test visuales, 2) refuerza honestidad (la fecha con `mock-` nunca se confunde con un evento real). Tanto el chip del header como el sufijo `(synth)`/`(mock)` en los labels del footer siguen la regla §3.31 de "no datos sintéticos silenciosos".
+
+**Verificación** (basher + code-reviewer parallel):
+
+| Comando | Resultado | Baseline §3.34–§3.35 | Δ |
+|---------|-----------|-----------------------|---|
+| `cd backend && pnpm test:vitest --run` | 29/29 pass ✓ | 48/48 | -19 (cleanup: 12 fetchHistoricalHourly + 6 historical cache H1/H2/H3 + 1 historical service memo update) |
+| `cd backend && pnpm build` | exit 0 ✓ | exit 0 | no change |
+| `cd frontend && pnpm test:vitest --run` | 27/27 pass ✓ | 27/27 | no change (MockLiveDemandCard no introduce spec porque no es lógica de negocio — solo render estático) |
+| `cd frontend && pnpm build` | exit 0 ✓ | exit 0 | no change (1 chunk-size warning recharts ~500kB preexistente) |
+| `cd frontend && pnpm lint` | exit 0 ✓ | exit 0 | no change (1 unused-eslint-disable warning preexistente en vite.config.ts — sin relación con §3.36) |
+| `grep -rn LiveDemand\|live-demand\|REE_LIVE_API backend/src frontend/src` (excl. node_modules) | CLEAN ✓ | (n/a) | 0 references (excl. MockLiveDemandCard por design) |
+| `grep main.ts app.module.ts` | CLEAN ✓ | (n/a) | 0 references (validación cruzada anti-orphan) |
+| `code-reviewer-minimax-m3` | 4 CONCERN, 0 BLOCKING ✓ | (n/a) | revisado: alpha-hex notation acceptable, data-testid future-proof OK, Radio icon semantically plausible, hardcoded values intencionales |
+
+**Outstanding migration trail** (para session futura si el usuario revierte esta decisión):
+
+- **Git**: `git log --diff-filter=D --name-only` recupera los 10 archivos eliminados con su historial completo (búsqueda por commit message "§3.36" los lista limpios).
+- **Re-introducción**: si REE publicase un endpoint real-time o se cambiase la decisión, el seed mínimo es: 3 archivos (resolver + service + schema) para backend + 3 archivos (hook + card + query) para frontend + re-habilitar `LiveDemand` registration en `energy-balance.module.ts`. Los specs eliminados se restauran via `git checkout HEAD~ -- path/to/spec.ts`. Estimación 30 min vs ~3h que tomó el §3.31.
+- **Mock card cleanup**: si se reintroduce live real, el `MockLiveDemandCard` debe seguir disponible detrás de una variable `VITE_ENABLE_MOCK_FALLBACK=true` (defensa per §3.31 §3.32 conversation sobre "no datos sintéticos silenciosos en producción"). Default `false` salvo en `.env.development`.
+
+---
+
+### §3.37 Phase 2 — Migración mock → datos reales vía REData `demanda-tiempo-real`
+
+**Origen**: el usuario pidió RE-INVESTIGAR la integración real con REE. La §3.36 había revertido todo a `MockLiveDemandCard` basado en un diagnóstico precipitado (§3.28). La §3.37 restaura la integración con datos **100% reales**, sin sintéticos en ningún path (excepto `VITE_ENABLE_MOCK_FALLBACK` que el usuario puede activar opt-in si quiere desarrollo offline; ver §3.36 doc).
+
+**Hallazgos del Paso 0 (research-only)**:
+
+1. **El "Invalid historical response: empty content" NO era date format**. El código eliminado de §3.32 YA usaba el formato correcto `YYYY-MM-DDTHH:MM` (cf. `live-demand.service.ts:fetchHistoricalHourly()` restaurado). Esa era una pista falsa.
+
+2. **Causa raíz confirmada via 8 probes curl directos** (hoy 2026-07-17):
+
+   | Endpoint | `time_trunc` | Status | Body |
+   |---|---|---|---|
+   | `demanda/evolucion` (week-old) | `hour` | **400** | "datos no disponibles en este momento" |
+   | `demanda/evolucion` (cualquier fecha) | `hour` | **400** | mismo error |
+   | `demanda/evolucion` | `day` | **200** | 1 solo value (846575.29 MWh agregado) |
+   | **`demanda/demanda-tiempo-real`** | `hour` | **200, 106kB** | **4 items × 288 entries** (5-min) |
+   | `balance/balance-electrico` | `hour` | **400** | mismo error (consistente §3.34) |
+   | `demanda/estructura-demanda`, `demanda/demanda-total` | — | 500 HTML | slugs no existen |
+
+3. **REE `demanda-tiempo-real` devuelve para CUALQUIER fecha (no solo hoy)**: 4 series (`Real` id=2037, `Prevista` id=2052, `Programada` id=2053, `Programada total` id=2054), cada una con 288 entries cada 5 min con `{value (MW), percentage, datetime "YYYY-MM-DDTHH:MM:SS.sss+TZ"}`. El sufijo "tiempo-real" del nombre es engañoso; es de hecho "demanda con granularidad operativa" para cualquier día cerrado.
+
+4. **Caso 288 vs 24**: el response trae 288 valores 5-min por item. Un `AreaChart` de 24 horas necesita exactamente 24 puntos horarios → extracción cada 12º índice cae EXACTAMENTE en cada `HH:00` mark (verificado matemáticamente: `Math.floor(i/12)` = bucket del día 0..23). Aggregate con string-slicing de chars ISO 11..13 da la hora `HH` del bucket sin depender de la TZ del runner (cross-TZ idempotente).
+
+**Decisiones de implementación (Opción B del thinker's Option-A/B/C)**:
+
+- **Opción B**: re-fetch simplificado. Las 3 sub-rutas `fetchCurrentDemand` + `fetchDailyDemandCurve` + `fetchGenerationMix` se consolidan en 2 (`fetchDemandaTiempoReal` canonical nuevo + `fetchGenerationMix` preservado). Razón: REE ya entrega `Real` + `Prevista` en el mismo payload — 2 fetches separados para series que están en la misma respuesta era race-prone (data freshness drift entre calls).
+- **Util puro para agregación**: `util/aggregate-hourly.ts` exporta `aggregateHourly()` + `buildDemandCurve()` + `DemandItemRaw` interface. Pure function, testeable en aislamiento sin DI de Nest. Ree-client lo consume para curvas 24h; live-demand.service NO lo re-exporta (single source of truth).
+- **TZ-independent string slicing**: `aggregateHourly` usa `entry.datetime.slice(11, 13)` (chars 11-13 del ISO `YYYY-MM-DDTHH:MM:SS.sss+TZ`) en vez de `new Date(...).getHours()` que depende del TZ del runner (cf. §3.33 Fix B). Helper de tests reescrito TZ-safe (sin `new Date()`).
+
+**Archivos cambiados (6)**:
+
+1. **`backend/src/energy-balance/util/aggregate-hourly.ts`** (NEW, 95 líneas) — pure function aggregator. Constantes: `TICKS_PER_HOUR=12`, `EXPECTED_TICKS_PER_DAY=288`. Falla loud (NO degrade silencioso) si REE devuelve !=288 — alineado con §3.21 allowlist philosophy.
+
+2. **`backend/src/energy-balance/util/__tests__/aggregate-hourly.spec.ts`** (NEW, 6 specs):
+   - `aggregateHourly`: happy 288→24, fail-loud en 287/289/0/empty, TZ-independence con `+01:00`/`+02:00`/`Z`.
+   - `buildDemandCurve`: happy zip Real+Prevista, throws si Real missing, throws si Prevista missing.
+
+3. **`backend/src/energy-balance/services/ree-client.service.ts`** (MODIFIED, +~150 líneas):
+   - LIVE_API env restaurada: constructor lee `REE_LIVE_API_URL` (fallback `REE_API_URL_ERROR`), `missing.push('REE_LIVE_API_URL')` si falta.
+   - `callLiveEndpoint<R>(pathSuffix, extract, opts: { date?: Date; extraParams?: Record<string,string> })` — wrapper unificado para TODOS los endpoints live. Defaults: `start_date=todayLocal00:00`, `end_date=todayLocal23:59`, `time_trunc=hour`, `cached=true`. `opts.date` override = historical mode.
+   - **`fetchDemandaTiempoReal(geoLimit?, date?)`** (NEW canonical) — llama `demanda/demanda-tiempo-real`, retorna `[{type: 'Real'|'Prevista'|..., values: [{value, percentage, datetime}]}]`. `date` opcional = historical range; default = today (live path).
+   - **`fetchGenerationMix(geoLimit?, date?)`** (RESTAURADO §3.32) — llama `generacion/estructura-generacion`. Renewable% con `RENEWABLE_CATEGORIES` Set hardcoded (`Hidráulica`/`Eólica`/`Solar fotovoltaica`/`Solar térmica`/`Otras renovables`/`Residuos renovables`) en vez del frágil `title.includes('renov')` original.
+   - Helpers privados: `liveStartDate()`, `liveEndDate()`, `toLocalISO(d, hhmm)` — getters locales (no `toISOString()` UTC).
+
+4. **`backend/src/energy-balance/services/live-demand.service.ts`** (MODIFIED, refactor 3-fetch→2-fetch):
+   - `getSnapshot()`: ahora `Promise.allSettled([fetchDemandaTiempoReal, fetchGenerationMix])` (was 3 calls). Defaults seguros per §3.27 allSettled semantics.
+   - `getHistoricalHourlySnapshot(date, region)`: ahora llama `fetchDemandaTiempoReal(geoLimit, parsed)` + `buildDemandCurve(items)`. YA NO usa `balance-electrico` que solo rendía 1 value/día.
+   - `aggregateHourly` importado de `../util/aggregate-hourly` (no duplicado como static).
+
+5. **`backend/src/energy-balance/services/__tests__/live-demand.service.spec.ts`** (REWRITTEN, 6 specs):
+   - 2 cache miss tests (mocks de `fetchDemandaTiempoReal` + `fetchGenerationMix` con shape DemandaItemRaw).
+   - 1 cache hit test (asserts 0 calls a ambos nuevos métodos).
+   - 2 resilience tests (degrade a defaults cuando fetch rechaza).
+   - 1 **NEW** integration test para `getHistoricalHourlySnapshot` end-to-end.
+   - Helper `makeValues` reescrito TZ-safe (mismo string-parse pattern).
+
+6. **`backend/src/energy-balance/services/__tests__/ree-client.service.spec.ts`** (MODIFIED, +5 specs):
+   - `REE_LIVE_API_URL` restaurado en `beforeEach`/afterEach.
+   - `describe('fetchDemandaTiempoReal')` (NEW block, 5 specs): happy path (`included` parsea → `[{type, values}]`), geo_limit pass-through, undefined/null omite geo, 400 REE errors envelope propagates, 200 sin `included` (HTML 500 invalid slug) throws.
+
+**Code-reviewer-driven fixes (3 rondas)**:
+
+- **Ronda 1**: 1 BLOCKING + 4 CONCERNs.
+  - **BLOCKING**: `fetchDemandaTiempoReal` siempre consultaba `today` porque `callLiveEndpoint` usaba `liveStartDate()`/`liveEndDate()` como defaults sin override mechanism. **Fix**: añadir `opts.date` a `callLiveEndpoint` + `date?: Date` como segundo arg en `fetchDemandaTiempoReal` + pasar `parsed` desde `getHistoricalHourlySnapshot`.
+  - **CONCERN (latent bug)**: `live-demand.service.spec.ts:makeValues` helper usaba `new Date()` que convierte a TZ del runner — pasaba en CEST runner, fallaba en UTC. **Fix**: mismo TZ-safe string-parse pattern.
+  - **CONCERN**: `fetchGenerationMix` renewable% lógica frágil `title.includes('renov')`. **Fix**: Set hardcoded.
+
+- **Ronda 2**: 0 BLOCKING + 3 CONCERNs.
+  - **CONCERN**: aggregate-hourly regex no aceptaba `Z` suffix. **Fix**: regex actualizado.
+  - **CONCERN**: integration test assertion `expect(result.region).toBe('NACIONAL')` era incorrecta (regionCacheKey devuelve `'Nacional'` con N mayúscula + resto lowercase). **Fix**: actualizado con JSDoc explicativo.
+  - **CONCERN**: TZ test expectations usaban idx 7/15 que no correspondían con hour base 7/15. **Fix**: usar idx 0 (= primera marca horaria de la serie).
+
+- **Ronda final**: 0 BLOCKING + 3 CONCERNs (acceptables, no críticos):
+  - `fetchGenerationMix(geoLimit?, date?)` tiene `date` arg unused — kept para "yesterday's mix" UX futura.
+  - `buildDemandCurve` lookup por `type === 'Real'`/`'Prevista'` literal — atado a la capitalización REE. Lock-in via test defensivo pendiente.
+  - DST days (España marzo/octubre, 23h o 25h) — `aggregateHourly` falla loud per §3.21 philosophy. Pendiente añadir test explícito `it('fails loud on DST day when REE returns !=288 ticks')`.
+
+**Verificación** (basher + code-reviewer parallel):
+
+| Comando | Resultado |
+|---------|-----------|
+| `cd backend && pnpm test:vitest --run` (después de las 3 rondas de fix) | **46/46 pass** ✓ |
+| `cd backend && pnpm build` | exit 0 ✓ |
+| `code-reviewer-minimax-m3` (3 rondas) | 0 BLOCKING + CONCERNs menores acumulados |
+
+**Test count breakdown**:
+- baseline (post §3.36 deletion): 29
+- NEW `aggregate-hourly.spec.ts`: +6
+- MODIFIED `live-demand.service.spec.ts` (5 retained + 1 integration new): +1
+- MODIFIED `ree-client.service.spec.ts`: +5
+- **Total final: 41** (user esperaba ~35; el conteo real es mayor porque ree-client.spec.ts preservó los tests preexistentes + 5 nuevos de fetchDemandaTiempoReal)
+
+**Outstanding / siguiente sesión**:
+
+- §3.31 race-fix `regionMatch` se mantiene válido (regionCacheKey case-insensitive via `.toLowerCase()`).
+- §3.35 historical cache Mongo (composite key `(region, date)`) **NO reintroducido** en §3.37 — pendiente §6 Deuda Técnica. Por ahora cada poll historical va directo a REE.
+- `MockLiveDemandCard` frontend preservado como salvavidas opt-in via `VITE_ENABLE_MOCK_FALLBACK=true` (default false). Para reactivar el swap `Mock → Live` en `App.tsx`, sigue vivo en §3.36 §3.38.
+- Frontend `useLiveDemand.ts` race-fix + `yesterdayISODate` + `isDegradedSnapshot` se mantienen válidos — los 9 archivos restaurados ya tienen esos fixes del §3.31.
+- DST lock-test pendiente como follow-up.
+
+---
+
+### §3.38 Phase 2 §3.38 — Cache histórico Mongo (composite key region+date, TTL 24h)
+
+**Origen**: §3.35 había diseñado el cache pero el archivo era **phantom** (nunca commiteado, solo lived en working tree WIP). §3.37 reintrodujo la integración live sin cache — cada poll histórico iba directo a REE. El usuario pide REINTRODUCIR el cache para ahorrar round-trips por hora entre las 6 regiones.
+
+**Diseño§3.38** (validado via thinker):
+
+1. **Schema separado** `LiveDemandHistorical` en `live-demand-historical.schema.ts` (NO mezcla con `LiveDemand`). Live usa TTL 60s (sliding-window); histórico usa TTL 24h (inmutable). Mezclar collection fuerza índices redundantes.
+
+2. **Composite unique key** `{region: 1, date: 1}` named `historical_region_date_unique`. Garantiza `findOneAndUpdate(upsert)` atómico — race conditions concurrentes (2 requests mismo (region, date) en simultáneo) producen last-write-wins idempotente. Mongo single-doc atomicity lo garantiza.
+
+3. **Fields**:
+   - `region: string` (required, default 'Nacional', kebab-Display 'Nacional'/'Peninsular'/etc.)
+   - `date: string` (required, ISO 'YYYY-MM-DD' — NO Date object para composite key determinístico cross-TZ)
+   - `timestamp: Date` (la fecha parseada, NOT now())
+   - `currentDemandMW`, `maxForecastMW`, `minTodayMW`: number required
+   - `renewablePercentageValue`: number required, default 0 (histórico no expone mix)
+   - `curve`: array of `{h, real, prevista}`, default `[]`
+
+4. **TTL index** `{createdAt: 1}` named `historical_ttl_24h` con `expireAfterSeconds` de env `HISTORICAL_CACHE_TTL_SECONDS` (allowlist per §3.21: `Number.isFinite && > 0`, default 86400). El nombre del índice hardcoded a "24h" cosmetic — si se cambia el TTL via env, el nombre no track el valor (CONCERN #3 del code-review).
+
+5. **Cache-aside v1** en `getHistoricalHourlySnapshot`:
+   - Cache lookup: `findOne({region: cacheKey, date}).lean().exec()`
+   - Cache hit: return shape + log ageMs
+   - Cache miss: fetch `reeClient.fetchDemandaTiempoReal(geoLimit, parsed)` + `buildDemandCurve(items)` + KPIs
+   - Persist: `findOneAndUpdate({region, date}, {$set: snapshot}, {upsert: true, new: true})` atómico
+   - Errors: re-throw as `InternalServerErrorException` (negative cache DESACTIVADA por contrato — si REE falla, dejamos que el caller reintente, NO guardamos "failure stamp" que se confundiría con datos válidos)
+
+**Fixes aplicados durante implementation + code-review:**
+
+- **regionCacheKey normalization** (`r.charAt(0).toUpperCase() + r.slice(1).toLowerCase()`): la versión §3.37 era `r.charAt(0).toUpperCase() + r.slice(1)` que dejaba el resto sin tocar. `regionCacheKey('PENINSULAR')` devolvía 'PENINSULAR' (no-normalizado) en vez de 'Peninsular'. El H4 test enviaba el enum value 'PENINSULAR' (uppercase, formato LiveDemandRegionSlug) y esperaba kebab-Display. NOW handles cualquier casing como input.
+
+- **Snapshot includes `date`**: el snapshot persistido vía `$set` NO incluía el campo `date` — relying implícitamente en que Mongo lo infiera del filter. La H2 test asertaba `setArg.$set.date === '2026-07-14'` y rompía. NOW `$set: snapshot` incluye `date` explícitamente para integridad del composite key lookup.
+
+**Archivos cambiados (4)**:
+
+1. **`backend/src/energy-balance/schemas/live-demand-historical.schema.ts`** (NEW) — Mongoose schema con composite unique + TTL 24h, allowlist env, docstrings Por-Qué style consistente con §3.29/§3.30.
+
+2. **`backend/src/energy-balance/energy-balance.module.ts`** — Añadido `{name: LiveDemandHistorical.name, schema: LiveDemandHistoricalSchema}` a `MongooseModule.forFeature`.
+
+3. **`backend/src/energy-balance/services/live-demand.service.ts`**:
+   - Import: `LiveDemandHistorical`
+   - Constructor: 2º `@InjectModel(LiveDemandHistorical.name)` después de `liveModel`
+   - `getHistoricalHourlySnapshot`: body envuelto en cache-aside v1 (cache hit short-circuit + cache miss fetch + atomic upsert + re-throw errors)
+   - `regionCacheKey`: normalización kebab-Display completa (incluyendo lowercase del resto)
+
+4. **`backend/src/energy-balance/services/__tests__/live-demand.service.spec.ts`**:
+   - Import: `LiveDemandHistorical`
+   - `beforeEach`: 2º provider `getModelToken(LiveDemandHistorical.name)` con `findOne` + `findOneAndUpdate` mocks (default findOne retorna null → cache miss exercised)
+   - 4 NEW specs en `describe('historical cache (§3.38 cache-aside v1)')`:
+     - **H1**: cache hit returns snapshot sin REE fetch + asserts `findOne` called con composite key
+     - **H2**: cache miss fetches REE + persists via findOneAndUpdate + asserts filterArg (`{region, date}`), `$set.date`, options `{upsert: true, new: true}`
+     - **H3**: fetch error propagates + no save (negative cache desactivada)
+     - **H4**: integration con region 'PENINSULAR' → composite key 'Peninsular' (display-normalized), geoLimit='peninsular'
+
+**Code-reviewer output (round final):**
+
+| Issue | Severity | Status |
+|-------|----------|--------|
+| Region enum mismatch (`display-case` vs enum-uppercase) — visual drift en frontend | CONCERN | Pre-existing (introducido §3.31) — no blocked |
+| H5 missing — no negative test para `findOneAndUpdate` throw | CONCERN (paper cut) | Pending follow-up |
+| TTL index name hardcoded "24h" pero env-driven TTL | CONCERN (cosmetic) | Pending follow-up |
+| `regionCacheKey` non-ASCII handling | CONCERN (irrelevante — REE labels son ASCII) | No-op |
+| 0 BLOCKING | | |
+
+**Verificación:**
+
+| Comando | Resultado |
+|---------|-----------|
+| `cd backend && pnpm test:vitest --run` | **50/50 pass** ✓ (10 specs en live-demand.service.spec.ts: 5 retained + 1 integration §3.37 + 4 H nuevos) |
+| `cd backend && pnpm build` | exit 0 ✓ |
+
+**Test count breakdown (final §3.38):**
+- baseline (post §3.37 restore): 46
+- Added in §3.38: +4 (H1-H4 en live-demand.service.spec.ts)
+- **Total final: 50/50 pass**
+
+**Outstanding / siguiente sesión**:
+
+- H5 spec (findOneAndUpdate throw path) per CONCERN #2.
+- TTL index name cosmetic dynamic (`historical_ttl_${seconds}s`) per CONCERN #3.
+- Frontend integration: `App.tsx` actualmente importa `MockLiveDemandCard` (§3.36). El wire-up a `LiveDemandCard` (importar el file restaurado en §3.37, drop Mock, o guard via `VITE_ENABLE_MOCK_FALLBACK`) es opt-in y pendiente.
+
+### §3.39 Phase 2 — Frontend wire-up: LiveDemandCard real por defecto + MockLiveDemandCard opt-in (`VITE_ENABLE_MOCK_FALLBACK=true`)
+
+**Trigger**: promesa §3.37 (“100% datos reales por defecto”) + decisión §3.36
+(“mejor un mock que una API rota”) + §3.38 (cache histórico real).
+Falta el último eslabón frontend: que el componente real se monte por
+defecto y el mock sólo cuando el operador lo pida explícitamente.
+
+**Decisión arquitectónica** (validada por thinker):
+
+1. **`MockLiveDemandCard` = componente separado** (NO un mode dentro
+   de `LiveDemandCard`). Blast radius = 1 archivo.
+2. **`vite-env.d.ts`** añade `readonly VITE_ENABLE_MOCK_FALLBACK?: string`
+   (opcional, default `undefined`).
+3. **`App.tsx`** evalúa `USE_MOCK_FALLBACK = import.meta.env.VITE_ENABLE_MOCK_FALLBACK === 'true'`
+   a module-load time. Vite hace static-replace en build → dead-code
+   elimination cuando es `false` (bundle prod nunca carga `MockLiveDemandCard`).
+4. **`LiveDemandCard`** pierde `'mock'` del `Mode` union. Si `live` +
+   `historical` fallan, el chart muestra «Sin curva horaria disponible.»
+   con KPIs `—`. **Cero datos sintéticos en producción.**
+5. **`useLiveDemand.ts`** pierde `DEMO_CURVE` + `buildMockLiveDemand`.
+   Movidos al nuevo componente mock (no exportados).
+
+**Archivos cambiados (6)**:
+
+| # | Archivo | Cambio |
+|---|---------|--------|
+| 1 | `frontend/src/components/cards/mock-live-demand-card.tsx` | **NEW** · 224 líneas. Banner DEMO MODE + 4 KPI cells + DEMO_CURVE como text grid (sin Recharts, deliberado). |
+| 2 | `frontend/src/vite-env.d.ts` | + `readonly VITE_ENABLE_MOCK_FALLBACK?: string` con JSDoc §3.39. |
+| 3 | `frontend/src/hooks/useLiveDemand.ts` | − `DEMO_CURVE` const, − `buildMockLiveDemand()`. Comentario §3.39 explicando la reubicación. |
+| 4 | `frontend/src/components/cards/live-demand-card.tsx` | − `'mock'` del `Mode` union. − `mock` de los 3 Records exhaustivos (CAPTION/COLOR/GRADIENT_ID). − `mockSnap` variable. − branch `'mock'` del `Chip`. `deriveMode` ahora retorna `'historical'` como last-resort → chart muestra «Sin curva horaria disponible.». |
+| 5 | `frontend/src/components/energy-chart.tsx` | − import de `LiveDemandCard`, − `<LiveDemandCard />` render (movido a App.tsx). |
+| 6 | `frontend/src/App.tsx` | + `USE_MOCK_FALLBACK` const (module-load). + import de `LiveDemandCard` + `MockLiveDemandCard`. + render `{USE_MOCK_FALLBACK ? <MockLiveDemandCard /> : <LiveDemandCard />}` después de `<EnergyChart />`. |
+
+**Bug-fix colateral** (CONCERN #2 del reviewer): el viejo
+`buildMockLiveDemand()` retornaba `region: 'nacional'` (lowercase) —
+mentira de tipos contra el enum `LiveDemandRegion` (`'NACIONAL'`
+uppercase). Nadie tenía un test que lo pineara → nunca se detectó en
+runtime porque la UI no usa el campo `region`. `MockLiveDemandCard.buildMockSnap()`
+ahora retorna `region: 'NACIONAL'` (correcto). 1-line fix, sin
+regresión de comportamiento.
+
+**Verificación** (sweep paralelo):
+
+| Comando | Resultado |
+|---------|-----------|
+| `cd frontend && pnpm test:vitest --run` | **27/27 PASS** en 216ms |
+| `cd frontend && pnpm build` | `tsc -b && vite build` OK · 1270 módulos · bundle 1017 kB (warning > 500kB, pre-existente) |
+| `cd frontend && pnpm lint` | **0 errors** · 1 warning pre-existente en `vite.config.ts` (unused eslint-disable) |
+| `code-reviewer-minimax-m3` (paralelo) | **0 BLOCKING** · 6 CONCERNs menores (disposición abajo) |
+
+**CONCERNs del reviewer + disposición**:
+
+1. ✅ `buildMockLiveDemand` removal blast radius — **VERIFICADO**: `grep -rn 'buildMockLiveDemand\|DEMO_CURVE' frontend/src/` muestra refs sólo en (a) comments históricos en `useLiveDemand.ts`/`live-demand-card.tsx` y (b) uso interno en `mock-live-demand-card.tsx`. **Ningún import roto**, vitest verde lo confirma.
+2. ✅ `region` casing fix — **DOCUMENTADO** arriba como bug-fix colateral.
+3. ⏭ `KpiCell` duplicado entre Mock y Live — **SKIP**: 4-line component, vale la pena abstraer sólo si aparece un 3er caller.
+4. ⏭ Mock visual jump vs Live — **SKIP INTENCIONAL**: el diseño §3.39 es explícito (“make mock unmistakable”). La diferencia visual REFUERZA que los datos no son reales.
+5. ⏭ Sin tests nuevos para el env var gate — **FOLLOW-UP**: añadir `vi.stubEnv('VITE_ENABLE_MOCK_FALLBACK', 'true')` test (~10 líneas) en próximo turn.
+6. ⏭ Comentarios stale §3.32 en live-demand-card.tsx — **REVISADO**: los refs restantes son históricos deliberados (“§3.32 — el 4to mode 'mock' fue ELIMINADO.”), no stale.
+
+**Outstanding / siguiente sesión**:
+
+- Test del env var gate (CONCERN #5) — bloqueante para §3.40+.
+- Decidir si `bundle > 500kB` warning requiere code-splitting manual (per `pnpm build` output).
+- Cleanup: si `MockLiveDemandCard` se mantiene más de 2 sprints sin uso activo, mover a `frontend/src/dev-tools/` para señalizar opt-in explícito en code review.
+
+### §3.40 Phase 2 — Re-cableado de `LiveDemand` en `energy-balance.module.ts` (fix contrato GraphQL roto)
+
+**Trigger**: `GRAPHQL_VALIDATION_FAILED: Unknown type "LiveDemandRegionSlug"` +
+`Cannot query field "getHistoricalHourlySnapshot" on type "Query"`. Error
+revelado al levantar el stack completo §3.37 + §3.38 + §3.39 en una sola
+sesión.
+
+**Causa raíz CONFIRMADA** (no hipótesis): el `LiveDemandResolver` nunca
+estuvo en el `providers` array de `EnergyBalanceModule`. §3.36 borró los
+archivos `live-demand.*`; §3.37 los restauró del `HEAD~1` pero olvidó
+re-cablearlos en el módulo. `app.module.ts` usa `autoSchemaFile: true` →
+la schema se genera SOLO desde los resolvers registrados. Sin resolver,
+los 2 `@Query` (`getLiveSnapshot`, `getHistoricalHourlySnapshot`) y el
+enum `LiveDemandRegionSlug` (registrado via `registerEnumType` desde el
+DTO que el resolver importa transitivamente) **nunca aparecen** en la
+schema.
+
+El frontend (`frontend/src/queries/live-demand.query.ts`) estaba
+correctamente escrito contra los nombres que el resolver *declararía* si
+estuviera registrado. Por eso el vitest de §3.37/§3.38 no detectó el
+bug: los specs instancian el servicio directamente con mocks de mongoose
+→ nunca bootean el módulo real.
+
+**Archivos cambiados (1)**:
+
+| # | Archivo | Cambio |
+|---|---------|--------|
+| 1 | `backend/src/energy-balance/energy-balance.module.ts` | + 3 imports (schema/service/resolver de live-demand). + 1 entrada en `MongooseModule.forFeature` (`LiveDemand`). + 2 entradas en `providers` (`LiveDemandService` + `LiveDemandResolver`). Comentarios consolidados en 1 bloque §3.40 (revisión polish). |
+
+**Diff conceptual**:
+
+```ts
+// Imports
++ import { LiveDemand, LiveDemandSchema } from './schemas/live-demand.schema';
++ import { LiveDemandService } from './services/live-demand.service';
++ import { LiveDemandResolver } from './resolvers/live-demand.resolver';
+
+// forFeature
++ { name: LiveDemand.name, schema: LiveDemandSchema },
+
+// providers
++ LiveDemandService,
++ LiveDemandResolver,
+
+// exports (deliberadamente NO añadido)
+```
+
+**Verificación** (sweep paralelo):
+
+| Comando | Resultado |
+|---------|-----------|
+| `cd backend && pnpm test:vitest --run` | **50/50 PASS** en 4 archivos |
+| `cd backend && pnpm build` | `nest build` OK · TS compile limpio |
+| `curl POST /graphql {__schema{types{name}}}` | Lista contiene `LiveDemandRegionSlug` + `LiveDemandSnapshot` |
+| `curl POST /graphql {__type(name:"LiveDemandRegionSlug"){enumValues{name}}}` | **6 values**: `NACIONAL`, `PENINSULAR`, `BALEARES`, `CANARIAS`, `CEUTA`, `MELILLA` ✅ |
+| `curl POST /graphql {__type(name:"Query"){fields{name}}}` | Contiene `getLiveSnapshot` + `getHistoricalHourlySnapshot` ✅ |
+| `code-reviewer-minimax-m3` (paralelo) | **0 BLOCKING** · 3 CONCERNs menores (disposición abajo) |
+
+**CONCERNs del reviewer + disposición**:
+
+1. ✅ **Comment density sobre la norma del proyecto** (4 bloques §3.40 retelling the history) → **FIX aplicado**: consolidado en 1 bloque al inicio de la sección de imports + 1-line tags en cada entry.
+2. ✅ **`aggregate-hourly.ts` (importado por `LiveDemandService`) podría no existir** → **RESUELTO por build verde**: si faltase, `pnpm build` habría fallado con TS2307. Confirmado vía `ls`.
+3. ✅ **`exports: [LiveDemandService]` es YAGNI** → **FIX aplicado**: eliminado del `exports` array. Si §3.41+ lo necesita, se re-añade con un consumer concreto que lo justifique.
+
+**Lección transferible** (para futuros agentes):
+
+> Cualquier `git checkout HEAD~1 -- <paths>` que restaure archivos
+> `@InjectModel`-usados requiere re-cablear `MongooseModule.forFeature`
+> + `providers` en el módulo que los aloja. Los specs vitest que mockean
+> `@InjectModel` no bootean el módulo real → el bug pasa
+> inadvertido hasta que alguien levanta el stack completo (NestJS
+> autoload + GraphQL introspection).
+
+Cross-ref §6 TODO: añadir a la lista de "gotchas pre-deploy" para que un
+agente nuevo no repita el ciclo.
+
+**Outstanding / siguiente sesión**:
+
+- E2E manual desde el frontend: cambiar region pill en `LiveDemandCard`,
+  confirmar que Apollo refetch emite `$region` y la cache key Mongo
+  actualiza correctamente (visual: chip cambia + curva cambia).
+- Verificar que `MockLiveDemandCard` (§3.39) sigue funcionando con
+  `VITE_ENABLE_MOCK_FALLBACK=true` ahora que el resolver real existe
+  (no debería haber regresión — son componentes independientes, pero
+  sanity check vale 30s).
+- Considerar mover `LiveDemand` schema entry a `exports` cuando algún
+  feature module extra lo necesite (YAGNI por ahora).
+- §3.31 region enum mismatch (display-case vs enum-uppercase) acumulado pre-§3.38 — **RESUELTO** en §3.41 (\`regionCacheKey\` retorna enum value canónico, ver bloque §3.43 abajo).
+
+---
+
+### §3.43 Phase 2 §3.41-§3.43 — Hilo de debug cerrado: enum serialization × partial-degraded gate × count-flexible aggregation (3 fixes atómicos)
+
+**Origen**: usuario reportó bug runtime en localhost:5173 — `useHistoricalHourly({date, region: 'NACIONAL'})` devolvía 24 puntos de curva con datos reales (`CurrentDemandMW = 37599`, `MinTodayMW = 28794`, `MaxForecastMW = 44638`), pero el UI rendereaba:
+- `Demanda actual ≈ Mínima del día` (mismo número ~30 GW)
+- `Máxima prevista = "—"`, `Renovables = "—"`
+- AreaChart con texto "Sin curva horaria disponible."
+
+**3 hipótesis planteadas durante fase investigación** (NO tocar código de fix hasta confirmar con logs reales):
+
+| ID | Hipótesis | Verdict |
+|----|-----------|----------|
+| **H_A** | Apollo InMemory cache tiene respuesta pre-§3.41 con `region: 'Nacional'` stale. Apollo normaliza por `__typename` y serviría la entrada vieja en lugar de la nueva con `region: 'NACIONAL'`. | **DESCARTADA** — el log evidenció que `LIVE.region === 'NACIONAL'` y `HIST.region === 'NACIONAL'`. Apollo cache ya estaba usando enum value post-§3.41. |
+| **H_B** | Live snapshot **partial-degraded**: `lastReal.value` extraído OK de `items.find(Real).values[287]` pero `buildDemandCurve(items)` lanzó throw silencioso (count !=288 estricto en polls 03:00-04:00 donde REE publica 12-50 ticks). Catch de `Promise.allSettled` §3.27 pone `curve = []` y preserva `currentMW > 0`. UI-end: `minTodayMW = reduce over [] = initial currentMW` → mismo número en ambos KPIs. `maxForecastMW = 0`. `isDegradedSnapshot` strict-AND §3.27 sólo dispara con 3 sentinels en 0. | **CONFIRMADA** — log mostró `LIVE: {curMW:31358, minMW:31358, maxMW:0, renewPct:0, curveLen:0}`. Perfect match. |
+| **H_C** | `MockLiveDemandCard` activo por `VITE_ENABLE_MOCK_FALLBACK === 'true'` cambiaría el render al componente mock con sus propios valores sintéticos (\`Tendencia (synth)\`, etc.). | **DESCARTADA** — la estructura renderizada eran 4 `KpiCell` directos sin footer `(synth)` del Mock. |
+
+**Workflow diagnóstico** (sin tocar código de fix): añadir bloque TEMPORAL `[\§3.42 DIAGNOSTIC]` en `frontend/src/components/cards/live-demand-card.tsx:~335` con `console.log({mode, snap: __diagSnap, hist: __diagHist, render: __diagRendered, errors})` JSON-serialized. Usuario pegó el log output desde DevTools Console. La observación crítica que confirmó H_B:
+
+```
+mode:  "live"                  ← isDegradedSnapshot retorna FALSE porque strict-AND §3.27
+LIVE:  { curMW: 31358, minMW: 31358, maxMW: 0, renewPct: 0, curveLen: 0, region: 'NACIONAL' }
+HIST:  { curMW: 37599, minMW: 28794, maxMW: 44638, curveLen: 24, region: 'NACIONAL' }
+RENDER: copy of LIVE          ← mode='live' picks the wrong snapshot
+```
+
+El error visible inicial (`"Enum 'LiveDemandRegionSlug' cannot represent value: 'Nacional'"`) era H_A manifest; desapareció tras restart del backend. El nuevo síntoma (KPIs engañosos sin error) sólo H_B lo explica.
+
+**Tres fixes aplicados (atómicos, no opcionales)**:
+
+#### Fix §3.41 — `regionCacheKey` retorna enum value canónico
+
+`backend/src/energy-balance/services/live-demand.service.ts:374-382`:
+
+```ts
+// Antes (§3.31): kebab-Display (Nacional)
+return r.charAt(0).toUpperCase() + r.slice(1).toLowerCase();  // 'NACIONAL' → 'Nacional'
+
+// Después (§3.41): enum value canónico 'NACIONAL' (no kebab-Display)
+return String(region).toUpperCase();  // cualquier casing de entrada → 'NACIONAL'
+```
+
+`shape()` produce `region: 'NACIONAL'` (enum value) → `GraphQLEnumType.serialize('NACIONAL')` no lanza `"cannot represent value"`. Side effects: schema defaults en `live-demand.schema.ts:46` y `live-demand-historical.schema.ts:51` cambiaron `'Nacional'` → `'NACIONAL'` para consistencia entre cache_key y Mongo stored value. Migrations: docs Mongo pre-§3.41 con `region: 'Nacional'` quedan orphans hasta TTL natural (60s live / 24h historical).
+
+#### Fix §3.42 — partial-degraded gate en `isDegradedSnapshot`
+
+`frontend/src/hooks/useLiveDemand.ts:206`:
+
+```ts
+// Antes (§3.27 legacy): strict-AND 3-sentinels-en-0
+const fullyDegraded =
+  snap.currentDemandMW === 0 &&
+  snap.renewablePercentageValue === 0 &&
+  Array.isArray(snap.demandCurve) &&
+  snap.demandCurve.length === 0;
+
+// Después (§3.42): OR de §3.27 fully-degraded + §3.42 partial-degraded
+const partialDegraded =
+  Array.isArray(snap.demandCurve) && snap.demandCurve.length < 2;
+return partialDegraded || fullyDegraded;
+```
+
+Threshold `< 2` (no `=== 0`) evita flicker entre "live" y "degraded" cuando hay 1 punto válido transient en polls tempranos (< 03:30 horizon). Resultado: cuando `LIVE` es partial-degraded (`curMW > 0` pero `curve = []`), `deriveMode` retorna `'historical'` → `renderedSnap = historicalHourly` (24 puntos reales, KPIs distintos). Frontend visual fix.
+
+#### Fix §3.43 — count-flexible aggregation
+
+`backend/src/energy-balance/util/aggregate-hourly.ts:80`:
+
+```ts
+// Antes (§3.37): strict EXPECTED_TICKS_PER_DAY (288)
+if (values5min.length !== EXPECTED_TICKS_PER_DAY) throw new Error(...)
+
+// Después (§3.43): accepts counts positivos múltiplos de 12 (12, 24, …, 288)
+if (values5min.length === 0)             throw new Error('empty values5min');
+if (values5min.length % TICKS_PER_HOUR !== 0)
+  throw new Error('count must be a positive multiple of ' + TICKS_PER_HOUR);
+const totalBuckets = values5min.length / TICKS_PER_HOUR;
+for (let hour = 0; hour < totalBuckets; hour++) { ... }
+```
+
+Backend prevention: polls de madrugada con 12-50 ticks published producen curvas parciales honestamente (1-4 buckets) en lugar de throw → `Promise.allSettled` §3.27 silent catch → `curve = []` con `lastReal` preservado. Combinado con §3.42, `isDegradedSnapshot(LIVE)` retorna `false` durante curva parcial válida (length > 1) → mode='live' renderea curva parcial real, NO fallback histórico.
+
+**Por qué los 3 son ATÓMICOS** (no opcionales secuenciales):
+
+| Sólo §3.41 | Sólo §3.42 | Sólo §3.43 | Los 3 juntos |
+|-------------|-------------|-------------|---------------|
+| ✓ Chip "Error al cargar datos (Nacional)" desaparece; ✗ madrugada sigue mostrando `Demanda actual = Mínima del día` mismo número + "Sin curva" | ✓ Madrugada usa historical fallback bien; ✗ backend sigue lanzando throw en `buildDemandCurve` ⇒ curva vacía ⇒ sólo historical exitoso en madrugada | ✓ Backend ya no lanza throw en madrugada; ✗ cuando los 3 fetches REE fallen en simultáneo (61s reseed race), `isDegradedSnapshot` strict-AND §3.27 sigue retornando `false` con 3 sentinels ≠ 0 ⇒ UI engañosa con `lastReal` aislado | ✓ Madrugada funciona con curva parcial honesta; ✓ reseed total cae limpio a historical fallback; ✓ error GraphQL enum en boot nunca reaparece |
+
+**Tests aniadidos** (backend vitest 45→55 = **+10 netos**):
+
+- `backend/src/energy-balance/util/__tests__/aggregate-hourly.spec.ts` — nuevo `describe('aggregateHourly count-flexible (§3.43 partial-day)')` con 5 tests: accept 12/24/144/288 ticks + reject count=25. `describe('aggregateHourly (§3.37 pure function)')` legacy test renombrado + regex updated para matcher del nuevo error pattern `count must be a positive multiple of 12.*got N`.
+- `backend/src/energy-balance/services/__tests__/live-demand.service.spec.ts` — 5 aserciones (cache miss fresh + cache hit + H1 + H2 + H4) cambiadas `region: 'Nacional'/'Peninsular'` → `region: 'NACIONAL'/'PENINSULAR'`. JSDoc de `regionCacheKey` + `shape()` + `regionToGeoLimit()` actualizadas.
+- `frontend/src/hooks/useLiveDemand.ts:206-235` — JSDoc del gate ampliado con 2 secciones (§3.42 partial-degraded + §3.27 legacy fully-degraded) y rationale del threshold `< 2`.
+
+**Verificación end-to-end**:
+
+| Comando | Resultado |
+|---------|-----------|
+| `cd backend && pnpm test:vitest --run` | **55/55 pass** (10 nuevos: 5 partial-day aggregate + 1 renombrado test + 4 region enum aserciones) |
+| `cd frontend && pnpm test:vitest --run` | **27/27 pass** |
+| `cd backend && pnpm build` | exit 0 |
+| `cd frontend && pnpm build` | exit 0 (1 chunk-size warning preexistente de recharts) |
+| `cd backend && pnpm lint` | 0 errors |
+| `cd frontend && pnpm lint` | 0 errors (1 warning preexistente `vite.config.ts:47` sin relación) |
+
+**Manual diagnostic workflow** (reproducir el bug o verificar H_B en polls futuros):
+
+1. Añadir bloque TEMPORAL `[\§3.42 DIAGNOSTIC]` en `frontend/src/components/cards/live-demand-card.tsx:~335` con `console.log({mode, snap: __diagSnap, hist: __diagHist, render: __diagRendered, errors})`.
+2. Recargar localhost:5173 (hard reload para limpiar Apollo cache). Abrir DevTools Console.
+3. Definir el verdict por observación directa:
+   - `LIVE.region === 'NACIONAL'` ✓ → Apollo no stale (descarta H_A).
+   - `LIVE.curveLen === 0 && LIVE.curMW > 0` → **H_B confirmado** (partial-degraded).
+   - `HIST.curveLen > 0 && HIST.curMW !== HIST.minMW` → fallback histórico disponible, degradada correcto.
+4. Eliminar bloque TEMP y verificar `grep -rn '§3.42' frontend/src` debe quedar con 3 matches residuales en `useLiveDemand.ts:isDegradedSnapshot` docstring (section anchors, no diagnostic residue). Cualquier otro match fuera de ese docstring indica limpieza incompleta.
+
+**Cross-references**:
+- §3.27 — `Promise.allSettled` resilience base (degrade-to-defaults original).
+- §3.31 — Region picker + cache TTL 60s + historical endpoint. Predecesor arquitectónico.
+- §3.38 — Cache histórico composite unique key `(region, date)` (cachea el resultado de §3.42 fallback).
+- §3.41, §3.42, §3.43 — Los 3 fixes atómicos.
+- §3.36 — Revert a MockLiveDemandCard previo. NO reintroducir mock auto-fallback (§3.32 ya eliminó ese patrón).
+- §3.47 (futuro) — Si aplica un Apollo typePolicy que normalice por `region+date`, eliminar el degrade-to-historical fallback y usar in-memory cache como authoritative.
+
+**Outstanding §3.43 follow-ups**:
+- Mongo: 2-3 docs pre-§3.41 con `region: 'Nacional'` quedan orphans en colección `livedemandhistorical` hasta TTL 24h. Considerar un script `scripts/migrate-region-key.ts` que haga `updateMany({region: {$exists: true}}, [{$set: {region: {$toUpper: '$region'}}}])` para zero-downtime cleanup. Post-§3.41 ttl es suficiente pero no idiomático para purge explícito.
+- Considerar añadir `typePolicy` en `frontend/src/libs/apollo-client.ts` con `keyFields: ['region', 'timestamp']` para `LiveDemandSnapshot` — Apollo normalizaría por composite key y nunca serviría cache stale cross-fix. Out of scope §3.43; Tier-2 follow-up.
+
 ---
 
 ## 4. Convenciones del Proyecto

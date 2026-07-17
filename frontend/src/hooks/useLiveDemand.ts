@@ -195,7 +195,7 @@ export const yesterdayISODate = (): string => {
 };
 
 /**
- * Phase 2 §3.31 — detection estricta de live snapshot degradado.
+ * Phase 2 §3.31 — detection de live snapshot degradado.
  *
  * Phase 2 §3.27 establece que `Promise.allSettled` pone `0` /
  * `[]` / `{renewablePercentageValue: 0}` cuando los 3 fetches REE
@@ -203,29 +203,43 @@ export const yesterdayISODate = (): string => {
  * esos zeros porque es indistinguible de casos edge genuine (no es
  * sólo cero, es "REE down").
  *
- * Estrategia: STRICT AND — todos los 3 sentinels coinciden al
- * mismo tiempo. Cubre:
- *   - `Promise.allSettled` 3-fail completo (ráfaga REE caída).
- *   - Cache stale con all-zero snapshot (poco probable; revisión #18).
- * No cubre:
- *   - Fallos individuales (current ok pero curve vacía). Esto
- *     deja room para un path degradado parcial sin cambiar UI,
- *     porque al menos 1 de los campos sí tiene valor.
+ * §3.42 — partial-degraded detection. El backend service.ts§3.37
+ * puede retornar un snapshot "incoherente" cuando
+ * `buildDemandCurve(items)` lanza throw silencioso (count !=288
+ * en polls tempranos 01:00-04:00 local) pero `lastReal.value` se
+ * extrajo OK: curMW > 0, curve = []. El symptom visible era
+ * "Demanda actual = Mínima del día = mismo X GW" + "Sin curva".
+ * Ese caso NO entraba aquí porque el strict-AND legacy de §3.27
+ * requiere todos los 3 sentinels en cero.
  *
- * Por qué strict en lugar de "any == 0": genuine night-time values
- * pueden ser ~0 MW (e.g. madrugada con renewable=0) — el strict AND
- * evita sobrealarma en esos casos genuinos.
+ * Nueva estrategia (2 puertas OR):
+ *   1. **§3.42 partial-degraded**: `curve.length < 2` — sienta el
+ *      precedente de que cualquier snapshot sin curva útil está
+ *      degradado independientemente de curMW. Esto caza el bug
+ *      "buildDemandCurve silencioso + lastReal preservado".
+ *   2. **§3.27 legacy strict-AND**: `curMW === 0 && renewPct === 0
+ *      && curve.length === 0` — preservado para el patrón REE
+ *      completamente caído (3 fetches rechazan al unísono).
+ *
+ * Por qué `< 2` en lugar de `=== 0`: en un día muy temprano (poll
+ * a las 00:05) podría haber 1 punto válido sin ser representativo.
+ * El threshold `< 2` evita flicker entre "live" y "degraded" en
+ * esos momentos transient sin perder el fallback histórico.
  */
 export const isDegradedSnapshot = (
   snap: LiveDemandData | undefined,
 ): boolean => {
   if (!snap) return false;
-  return (
+  // §3.42 partial-degraded — la curva no es representativa.
+  const partialDegraded =
+    Array.isArray(snap.demandCurve) && snap.demandCurve.length < 2;
+  // §3.27 legacy fully-degraded — todos los sentinels en 0.
+  const fullyDegraded =
     snap.currentDemandMW === 0 &&
     snap.renewablePercentageValue === 0 &&
     Array.isArray(snap.demandCurve) &&
-    snap.demandCurve.length === 0
-  );
+    snap.demandCurve.length === 0;
+  return partialDegraded || fullyDegraded;
 };
 
 /**
@@ -239,83 +253,22 @@ export const regionDisplayToSlug = (
   return REGION_DISPLAY_TO_SLUG[display];
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Phase 2 §3.32 — MOCK FALLBACK cuando REE upstream falla (4xx/5xx).
+// Phase 2 §3.39 — MOCK FALLBACK MOVIDO a `mock-live-demand-card.tsx`.
 //
-// Cuando AMBOS live + historical fallan (cadena entera REE caída),
-// el componente `live-demand-card.tsx` debe mostrar SIEMPRE algo al
-// usuario, no "Sin curva horaria disponible." — UX percibida como
-// error cuando realidad es un upstream-down transitorio.
+// Antes (§3.32): `buildMockLiveDemand()` vivía aquí como fallback
+// automático cuando live + historical fallaban. Eso hacía que
+// producción mostrase datos SINTÉTICOS sin que el usuario lo pidiese
+// explícitamente — violación de la promesa §3.37 ("100% datos reales
+// por defecto").
 //
-// Estos datos son SINTÉTICOS. El chip "DEMO" + footer "Datos
-// sintéticos · NO ES REAL" hacen explícito el carácter de mock. El
-// PulseDot animado del "EN VIVO" se omite en el chip mock para
-// reforzar visualmente que NO es streaming.
+// Ahora (§3.39): el mock es un componente separado
+// (`MockLiveDemandCard`) que SOLO se monta en App.tsx cuando
+// `import.meta.env.VITE_ENABLE_MOCK_FALLBACK === 'true'`. La data
+// sintética + DEMO_CURVE viven dentro del componente (no se
+// exportan), reduciendo blast radius: cualquier consumer futuro del
+// hook sólo ve datos reales.
 //
-// Shape DEMO_CURVE (24 horas, MW): representa una curva plausible
-// de demanda española: mínimo 4-5am (~17.5 GW), pico vespertino
-// 20h (~36 GW). `real === prevista` porque no tenemos forecast
-// sintético por separado (el dato upstream tampoco lo tiene claro
-// en histórico, per §3.31 forecast endpoint es #21 outstanding).
-// ─────────────────────────────────────────────────────────────────────────────
-
-const DEMO_CURVE: readonly DemandCurvePoint[] = [
-  { h: "00h", real: 22500, prevista: 22500 },
-  { h: "01h", real: 21000, prevista: 21000 },
-  { h: "02h", real: 19500, prevista: 19500 },
-  { h: "03h", real: 18300, prevista: 18300 },
-  { h: "04h", real: 17500, prevista: 17500 },
-  { h: "05h", real: 18100, prevista: 18100 },
-  { h: "06h", real: 21000, prevista: 21000 },
-  { h: "07h", real: 26500, prevista: 26500 },
-  { h: "08h", real: 30500, prevista: 30500 },
-  { h: "09h", real: 32500, prevista: 32500 },
-  { h: "10h", real: 32000, prevista: 32000 },
-  { h: "11h", real: 31000, prevista: 31000 },
-  { h: "12h", real: 29500, prevista: 29500 },
-  { h: "13h", real: 29000, prevista: 29000 },
-  { h: "14h", real: 28500, prevista: 28500 },
-  { h: "15h", real: 28000, prevista: 28000 },
-  { h: "16h", real: 27800, prevista: 27800 },
-  { h: "17h", real: 28500, prevista: 28500 },
-  { h: "18h", real: 30500, prevista: 30500 },
-  { h: "19h", real: 33500, prevista: 33500 },
-  { h: "20h", real: 36000, prevista: 36000 },
-  { h: "21h", real: 34500, prevista: 34500 },
-  { h: "22h", real: 30000, prevista: 30000 },
-  { h: "23h", real: 25500, prevista: 25500 },
-] as readonly DemandCurvePoint[];
-
-/**
- * Sync helper que produce un `LiveDemandData` compatible con el shape
- * del backend. El caller decide cuándo invocar (en `live-demand-card.tsx`,
- * cuando `isDegraded && !validHistoricalAvailable`).
- *
- * Phase 2 §3.32 — POLÍTICA DE REGION:
- *   SIN parámetro region. La intención es explícita: el mock siempre
- *   devuelve `region: 'nacional'` independientemente de qué pill
- *   tenga el user seleccionado. Razón: DEMO_CURVE es Nacional-plausible
- *   y no tiene variantes per-region en v1; override hardcoded alinea
- *   schema-level honesty con shape-level honesty.
- *   Future (#33 outstanding): per-region mock families — en ese caso
- *   reintroducir el param `region?: LiveDemandRegion`.
- */
-export const buildMockLiveDemand = (): LiveDemandData => {
-  const reals = DEMO_CURVE.map((p) => p.real);
-  const max = Math.max(...reals);
-  const min = reals.reduce(
-    (acc, r) => Math.min(acc, r),
-    Number.POSITIVE_INFINITY,
-  );
-  const currentMW = DEMO_CURVE[DEMO_CURVE.length - 1]?.real ?? 25000;
-  return {
-    currentDemandMW: currentMW,
-    maxForecastMW: max,
-    minTodayMW: min,
-    renewablePercentageValue: 45,
-    timestamp: new Date().toISOString(),
-    region: "nacional",
-    demandCurve: DEMO_CURVE.map((p) => ({ ...p })),
-    co2Emissions: "142 gCO₂eq/kWh",
-  };
-};
+// Si tanto `useLiveDemand` como `useHistoricalHourly` fallan, el
+// `LiveDemandCard` ahora renderiza un estado de error explícito
+// (chip "ERROR" + mensaje "Sin curva horaria disponible") en vez
+// de fabricar números.

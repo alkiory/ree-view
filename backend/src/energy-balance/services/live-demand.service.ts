@@ -6,8 +6,10 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { LiveDemand } from '../schemas/live-demand.schema';
+import { LiveDemandHistorical } from '../schemas/live-demand-historical.schema';
 import { ReeClientService } from './ree-client.service';
 import { LiveDemandRegionSlug } from '../dto/live-demand.input';
+import { buildDemandCurve } from '../util/aggregate-hourly';
 
 @Injectable()
 export class LiveDemandService {
@@ -16,6 +18,11 @@ export class LiveDemandService {
   constructor(
     @InjectModel(LiveDemand.name)
     private readonly liveModel: Model<LiveDemand>,
+    // §3.38 — colección de cache histórico. Composite unique key
+    // (region, date), TTL 24h. Distinto del `liveModel` (TTL 60s) por
+    // política de retención + semántica (inmutable vs sliding-window).
+    @InjectModel(LiveDemandHistorical.name)
+    private readonly historicalModel: Model<LiveDemandHistorical>,
     private readonly reeClient: ReeClientService,
   ) {}
 
@@ -34,10 +41,12 @@ export class LiveDemandService {
    *
    * `region?: LiveDemandRegionSlug`:
    *   - undefined / null / 'Nacional' (enum value 'nacional') → omit
-   *     `geo_limit`, buscar/cachear bajo literal 'Nacional' (display
-   *     name) para mantener consistencia con la collection.
+   *     `geo_limit`, buscar/cachear bajo literal 'NACIONAL' (enum
+   *     value) — necesario para que GraphQL enum serialization
+   *     funcione end-to-end (cf. §3.41 fix).
    *   - 'peninsular' / 'baleares' / 'canarias' / 'ceuta' / 'melilla' →
-   *     REE con `?geo_limit=<slug>`, cache bajo el mismo string.
+   *     REE con `?geo_limit=<slug>`, cache bajo 'PENINSULAR' | … (enum
+   *     value).
    *
    * Por qué 3 fetches paralelos en lugar de 1 consolidado: REE no
    * expone un endpoint único que devuelva {current, curve, mix} en
@@ -92,29 +101,54 @@ export class LiveDemandService {
         `↻ Live cache miss → fetching REE (region=${cacheKey}, geo_limit=${geoLimit ?? 'omitted'})`,
       );
 
+      // §3.37 — refactor simplificado. La §3.32 hacía 3 fetches en
+      // paralelo (current-demand + daily-curve + generation-mix) que
+      // era redundante con el payload consolidado de
+      // `demanda/demanda-tiempo-real` (4 series × 288 ticks). Ahora
+      // 2 fetches: el canonical nuevo + generation mix (endpoint
+      // separado para mix renewable).
+      //
       // Resilience (CURRENT §3.27): Promise.allSettled degrada a defaults
-      // si una de las 3 sub-rutas falla. Partial > nada.
-      const [currentRes, curveRes, mixRes] = await Promise.allSettled([
-        this.reeClient.fetchCurrentDemand(geoLimit ?? undefined),
-        this.reeClient.fetchDailyDemandCurve(geoLimit ?? undefined),
+      // si una de las 2 sub-rutas falla. Partial > nada.
+      const [demandaRes, mixRes] = await Promise.allSettled([
+        this.reeClient.fetchDemandaTiempoReal(geoLimit ?? undefined),
         this.reeClient.fetchGenerationMix(geoLimit ?? undefined),
       ]);
 
-      const currentMW =
-        currentRes.status === 'fulfilled' ? currentRes.value : 0;
-      if (currentRes.status === 'rejected') {
-        this.logger.warn(
-          `↻ Live snapshot partial — current-demand failed: ${
-            currentRes.reason?.message ?? String(currentRes.reason)
-          }`,
-        );
-      }
+      // Default seguros (cf. §3.27 allSettled semantics).
+      let currentMW = 0;
+      let curve: { h: string; real: number; prevista: number }[] = [];
 
-      const curve = curveRes.status === 'fulfilled' ? curveRes.value : [];
-      if (curveRes.status === 'rejected') {
+      if (demandaRes.status === 'fulfilled') {
+        const items = demandaRes.value;
+        // currentMW = último valor de la serie 'Real' (último tick del
+        // momento presente o del día cerrado si la poll cae en fin de
+        // jornada REE).
+        const realItem = items.find((it) => it.type === 'Real');
+        const lastReal =
+          realItem && realItem.values.length > 0
+            ? realItem.values[realItem.values.length - 1]
+            : undefined;
+        currentMW = lastReal?.value ?? 0;
+
+        try {
+          curve = buildDemandCurve(items);
+        } catch (buildErr) {
+          // Falla la curva cuando falta Real+Prevista o vienen con
+          // count !=288. Degradamos a [] y dejamos el `mix` con su valor
+          // — el frontend detecta `curve.length < 2` y muestra el KPI
+          // estático «Última demanda diaria conocida» (per Opción C §3.34).
+          this.logger.warn(
+            `↻ Live snapshot partial — curve build failed: ${
+              buildErr?.message ?? String(buildErr)
+            }`,
+          );
+          curve = [];
+        }
+      } else {
         this.logger.warn(
-          `↻ Live snapshot partial — daily-demand-curve failed: ${
-            curveRes.reason?.message ?? String(curveRes.reason)
+          `↻ Live snapshot partial — demanda-tiempo-real failed: ${
+            demandaRes.reason?.message ?? String(demandaRes.reason)
           }`,
         );
       }
@@ -172,7 +206,7 @@ export class LiveDemandService {
   }
 
   /**
-   * Phase 2 §3.31 — historical hourly archive fallback.
+   * Phase 2 §3.31 + §3.38 — historical hourly archive fallback.
    *
    * El frontend llama este resolver cuando el live snapshot está
    * degraded (zero-sentinels per §3.27 `Promise.allSettled`) y quiere
@@ -180,21 +214,31 @@ export class LiveDemandService {
    *
    * `date: string` ISO 8601 (`YYYY-MM-DD`). `region?: enum` opcional.
    *
-   * POR QUÉ NO se cachea con el mismo patrón que live:
-   *   - Historical hourly data de REE no cambia retroactivamente (a
-   *     diferencia de live tick). Cacheo agresivo (24h) sería una
-   *     victoria barata — pero no prioritario en este turn: añadir
-   *     cache complica schema (would need region+date compound key).
-   *   - Live mockup consume 1 fetch / 60s; esto consume 1 fetch / poll
-   *     sólo cuando live está degraded (rare path).
-   * Future: si el degraded path se vuelve hot, añadir cache con
-   * TTL=24h keyed por `(region, date)` en una collection separada
-   * `LiveDemandHistorical`.
+   * §3.38 — Cache-aside v1 contra `LiveDemandHistorical`:
+   *
+   *   1. `findOne({region: cacheKey, date})` — composite unique lookup.
+   *   2. Si hit → devolver shape desde cache (0 fetch a REE).
+   *   3. Si miss → fetch a `demanda-tiempo-real` con rango explícito,
+   *      computar curva + KPIs, atomic upsert vía
+   *      `findOneAndUpdate({region, date}, {$set}, {upsert, new})`.
+   *   4. Errores NO se cachean (negative cache desactivada): REE
+   *      upstream falló → re-throw tal cual → caller decide.
+   *
+   * Race conditions: 2 requests concurrentes mismo (region, date)
+   * pasan el cache miss en simultáneo, ambos hacen fetch a REE,
+   * ambos intentan upsert. El composite unique key + MongoDB's
+   * single-doc atomicity garantiza last-write-wins (idempotente).
+   *
+   * POR QUÉ TTL 24h (no más largo, no más corto):
+   *   - REE no cambia histórico retroactivamente — 24h es el sweet
+   *     spot entre amortiguar pollers y dejar margen para refinamientos
+   *     tardíos del upstream REE (consolidación post-publicación).
+   *   - Env override `HISTORICAL_CACHE_TTL_SECONDS` (allowlist per
+   *     §3.21) en el schema.
    *
    * Shape devuelto: MISMO que live (`LiveDemandSnapshot`), salvo
-   * `currentDemandMW = curve[último].real` (mejor estimación del
-   * "current" para una hora marcada), `maxForecastMW = curve.reduce
-   * max(prevista)`, `minTodayMW = curve.reduce min(real > 0)`.
+   * `currentDemandMW = curve[último].real`, `renewablePercentageValue
+   * = 0` (histórico no expone mix separado).
    */
   async getHistoricalHourlySnapshot(
     date: string,
@@ -221,14 +265,40 @@ export class LiveDemandService {
     const cacheKey = this.regionCacheKey(region);
 
     try {
-      const curve = await this.reeClient.fetchHistoricalHourly(
-        parsed,
-        geoLimit ?? undefined,
+      // §3.38 — cache lookup (composite unique key).
+      const cached = await this.historicalModel
+        .findOne({ region: cacheKey, date })
+        .lean()
+        .exec();
+
+      if (cached) {
+        const createdAt = (cached as { createdAt?: Date }).createdAt;
+        const ageMs = createdAt
+          ? Date.now() - new Date(createdAt).getTime()
+          : Number.POSITIVE_INFINITY;
+        this.logger.log(
+          `↻ Historical cache hit (region=${cacheKey}, date=${date}, age=${Math.round(ageMs / 1000)}s)`,
+        );
+        return this.shape(cached);
+      }
+
+      this.logger.log(
+        `↻ Historical cache miss → fetching REE (region=${cacheKey}, date=${date}, geo_limit=${geoLimit ?? 'omitted'})`,
       );
+
+      // §3.37 — historical path: una sola llamada al endpoint
+      // `demanda-tiempo-real` con rango explícito. REE expone
+      // histórico para cualquier fecha pasada con la misma
+      // granularidad 5-min.
+      const items = await this.reeClient.fetchDemandaTiempoReal(
+        geoLimit ?? undefined,
+        parsed,
+      );
+      const curve = buildDemandCurve(items);
 
       const currentMW =
         curve.length > 0 ? (curve[curve.length - 1]?.real ?? 0) : 0;
-      const renewablePercentageValue = 0; // No expuesto por histórico
+      const renewablePercentageValue = 0; // Histórico no expone mix separado
       const maxForecastMW = curve.reduce(
         (acc, p) => Math.max(acc, p.prevista),
         0,
@@ -246,10 +316,26 @@ export class LiveDemandService {
         renewablePercentageValue,
         curve,
         region: cacheKey,
+        // §3.38 FIX — incluir `date` en el $set para que la collection
+        // tenga el campo required del schema. Mongo (con composite
+        // unique) PUEDE inferirlo del filter key, pero la doc guardada
+        // no necesariamente lo contiene — confiar en eso es implícito.
+        // Setearlo explicit garantiza integridad del cache lookup.
+        date,
       };
 
+      // Atomic upsert — race-safe via composite unique key
+      // {region, date}. Concurrent fetches para el mismo (region, date)
+      // producen last-write-wins (idempotente — los datos de REE son
+      // deterministas por día cerrado).
+      await this.historicalModel.findOneAndUpdate(
+        { region: cacheKey, date },
+        { $set: snapshot },
+        { upsert: true, new: true },
+      );
+
       this.logger.log(
-        `↻ Historical hourly fetched (date=${date}, region=${cacheKey}, points=${curve.length})`,
+        `↻ Historical hourly cached (date=${date}, region=${cacheKey}, points=${curve.length})`,
       );
 
       return this.shape(snapshot);
@@ -264,11 +350,31 @@ export class LiveDemandService {
   }
 
   /**
-   * Normaliza el input enum (o undefined) al `cacheKey` literal que
-   * se almacena bajo `LiveDemand.region` en Mongo. Display name —
-   * IMPORTANTE: el schema usa el string kebab-case convertido al
-   * slug español ('Nacional' con N mayúscula) para mantener
-   * legibilidad con REGIONS del frontend.
+   * §3.41 — Normaliza el input enum (o undefined) al `cacheKey` literal
+   * que se almacena bajo `LiveDemand.region` en Mongo Y se devuelve en
+   * `snapshot.region` al resolver. El contrato es el **enum value** de
+   * `LiveDemandRegionSlug` ('NACIONAL' / 'PENINSULAR' / 'BALEARES' /
+   * 'CANARIAS' / 'CEUTA' / 'MELILLA'), NO el Display name kebab-case.
+   *
+   * Por qué enum value (no display name): el schema GraphQL declara
+   * `region: LiveDemandRegionSlug` en `LiveDemandSnapshot.region`. La
+   * serialización del response invoca `GraphQLEnumType.serialize()`,
+   * que rechaza cualquier string que no sea uno de los valores literales
+   * del enum. Si `cacheKey` devuelve 'Nacional' (display), la
+   * serialización lanza `"Enum 'LiveDemandRegionSlug' cannot represent
+   * value: 'Nacional'"` y el response entero falla.
+   *
+   * Acepta y normaliza CUALQUIER formato de entrada al enum value:
+   *   undefined / 'nacional' / 'NACIONAL' / 'Nacional' / 'peninsular' / 'PENINSULAR' / 'Peninsular' / …
+   *   → siempre retorna enum value ('NACIONAL' / 'PENINSULAR' / 'BALEARES' / 'CANARIAS' / 'CEUTA' / 'MELILLA').
+   *
+   * §3.41 WAS §3.38: la versión kebab-Display ('Nacional') vivía aquí
+   * y forzaba GraphQL enum serialization failure. Por qué nadie lo
+   * cazó antes: los specs mockean el service layer pero NO prueban la
+   * serialización GraphQL — el bug sólo aparecía en el bootstrap real
+   * del schema + un response con datos (no request validation). Future
+   * agent que toque `regionCacheKey` debe leer §3.41 ANTES de cambiar
+   * la convención (superficie de breaking change silent).
    *
    * FIX (TS narrowing Phase 2 §3.31): usamos `String(region)` para
    * colapso de tipos en runtime. Sin esto, ramas con `typeof region
@@ -280,15 +386,24 @@ export class LiveDemandService {
   private regionCacheKey(
     region?: LiveDemandRegionSlug | string | null,
   ): string {
-    if (!region) return 'Nacional';
-    const r = String(region);
-    return r.charAt(0).toUpperCase() + r.slice(1);
+    if (!region) return 'NACIONAL';
+    return String(region).toUpperCase();
   }
 
   /**
-   * Convierte el cacheKey display ('Nacional' / 'Peninsular') al slug
-   * kebab-case que REE acepta en `?geo_limit=`. Nacional → null (omit);
-   * el resto baja a kebab-case.
+   * §3.41 — Convierte el input (enum value 'NACIONAL' / 'PENINSULAR'
+   * o cualquier string suelto kebab/kebab-Display) al slug kebab-lowercase
+   * que REE acepta en `?geo_limit=`. 'nacional' → null (omit); cualquier
+   * otro como 'peninsular' | 'baleares' | 'canarias' | 'ceuta' | 'melilla'
+   * baja a kebab-lowercase y se pasa forward.
+   *
+   * Por qué `.toLowerCase()` se aplica al input aquí: el input llega
+   * post-§3.41 como enum value ('NACIONAL' | 'PENINSULAR') pero también
+   * puede llegar kebab-lowercase ('nacional' | 'peninsular') si un caller
+   * external decide pasarlo raw. Independientemente del casing de
+   * entrada, la normalización converge al mismo slug kebab-lowercase
+   * que REE acepta. Migraciones upstream que cambien el casing del
+   * enum value no propagan — regionToGeoLimit absorbe el drift.
    */
   private regionToGeoLimit(
     region?: LiveDemandRegionSlug | string | null,
@@ -299,13 +414,27 @@ export class LiveDemandService {
   }
 
   /**
-   * Phase 2 §3.31 schema migration note: pre-§3.31 docs en MongoDB no
-   * tienen `region` field (region: undefined). El lookup
-   * `findOne({region: 'Nacional'})` no los matchea. Migración
-   * estrategia: TTL natural los limpia en ≤60s post-deploy (no
-   * requiere una startup migration hook). Si en el futuro queremos
-   * zero-downtime backfill, añadir `updateMany({region: {$exists:
-   * false}}, {$set: {region: 'Nacional'}})` en `OnModuleInit`.
+   * §3.41 schema migration note — pre-§3.41 docs en MongoDB tienen
+   * `region` en kebab-Display ('Nacional' | 'Peninsular' | …) desde
+   * §3.31. Tras el fix de enum serialization (regionCacheKey retorna
+   * enum value: 'NACIONAL' | 'PENINSULAR' | …), el lookup
+   * `findOne({region: 'NACIONAL'})` no matchea esos docs preexistentes.
+   *
+   *   - Live (`LiveDemand`): TTL natural limpia en ≤60s post-deploy;
+   *     backfill innecesario.
+   *   - Historical (`LiveDemandHistorical`): TTL 24h — ventana
+   *     tolerable de cache miss post-deploy (REE upstream sólo se
+   *     consulta una vez cada 24h por `(region, date)`).
+   *
+   * Si en el futuro queremos zero-downtime backfill, añadir en
+   * `OnModuleInit`:
+   *   ```ts
+   *   await this.liveModel.updateMany(
+   *     { region: { $in: ['Nacional', 'Peninsular', …] } },
+   *     [{ $set: { region: { $toUpper: '$region' } } }],
+   *   );
+   *   ```
+   *
    * Esta nota está aquí (en lugar de método vacío anterior) para
    * satisfacer ESLint `no-unused-private-method`.
    */
