@@ -81,26 +81,28 @@ describe("resolveMixColor", () => {
   });
 
   describe("palette integrity — dual-coding lockdown", () => {
-    // ⚠ NOTE: este describe block intencionalmente hardcodea la secuencia
-    // Figma byte-level. Phase 3 palette rebalance (legítimo) DEBE actualizar
-    // TANTO `design-tokens.ts` COMO este spec en el mismo commit. Si renuevan
-    // los hex sin tocar este spec, los tests rompen por contrato, no por bug.
+    // ⚠ NOTE: este describe block lockea las CSS vars que el palette
+    // resuelve. Phase 3 palette rebalance (legítimo) DEBE actualizar TANTO
+    // `frontend/src/index.css` (los dos bloques theme) COMO este spec en el
+    // mismo commit. Si renuevan los hex en index.css sin tocar este spec,
+    // los tests rompen por contrato, no por bug.
     //
-    // Este bloque también GUARANTIZA que los hex literals SOLO viven en
-    // design-tokens.ts. Si alguien en el futuro mueve los hex a otra
-    // fuente, este test fallaría (palettes son el contrato).
-    it("renewableAlt[0..3] match kit Figma sequence", () => {
-      expect(C.renewableAlt[0]).toBe("#34D399");
-      expect(C.renewableAlt[1]).toBe("#2DD4BF");
-      expect(C.renewableAlt[2]).toBe("#22D3EE");
-      expect(C.renewableAlt[3]).toBe("#6EE7B7");
+    // §3.44 update: los tokens ya no son hex literales — son referencias
+    // `var(--c-X)` resueltas por el browser según `data-theme`. Las vars
+    // concretas viven en `index.css` `:root` (dark) y `:root[data-theme="light"]`
+    // (light override).
+    it("renewableAlt[0..3] reference correct CSS variables (theme-resolved)", () => {
+      expect(C.renewableAlt[0]).toBe("var(--c-renewable)");
+      expect(C.renewableAlt[1]).toBe("var(--c-non-renewable-dim)");
+      expect(C.renewableAlt[2]).toBe("var(--c-accent-cyan)");
+      expect(C.renewableAlt[3]).toBe("var(--c-renewable-dim)");
     });
 
-    it("nonRenewableAlt[0..3] match kit Figma sequence", () => {
-      expect(C.nonRenewableAlt[0]).toBe("#8B5CF6");
-      expect(C.nonRenewableAlt[1]).toBe("#FF3D77");
-      expect(C.nonRenewableAlt[2]).toBe("#FFC93C");
-      expect(C.nonRenewableAlt[3]).toBe("#FF8A3D");
+    it("nonRenewableAlt[0..3] reference correct CSS variables", () => {
+      expect(C.nonRenewableAlt[0]).toBe("var(--c-accent-purple)");
+      expect(C.nonRenewableAlt[1]).toBe("var(--c-accent-pink)");
+      expect(C.nonRenewableAlt[2]).toBe("var(--c-accent-gold)");
+      expect(C.nonRenewableAlt[3]).toBe("var(--c-accent-orange)");
     });
 
     it("MIX items stay consistent with palette indices (no drift)", () => {

@@ -182,7 +182,7 @@ export default function DataSelector({
           type="button"
           onClick={handleApply}
           className="px-4 py-2 rounded-lg text-sm font-semibold transition-opacity hover:opacity-90"
-          style={{ background: C.renewable, color: '#062017' }}
+          style={{ background: C.renewable, color: C.textOnRenewable }}
         >
           Aplicar filtros
         </button>

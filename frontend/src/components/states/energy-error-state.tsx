@@ -40,7 +40,7 @@ export default function EnergyErrorState({ error, refetch }: EnergyErrorStatePro
         type="button"
         onClick={() => refetch()}
         className="mt-3 px-3 py-1.5 rounded-lg text-[12px] font-semibold"
-        style={{ background: C.danger, color: '#1A0606' }}
+        style={{ background: C.danger, color: C.textOnDanger }}
       >
         Reintentar
       </button>

@@ -1,4 +1,4 @@
-import { CalendarDays, Zap } from "./primitives";
+import { CalendarDays, Zap, ThemeToggle } from "./primitives";
 import { C } from "../../libs/design-tokens";
 
 interface DashboardHeaderProps {
@@ -29,6 +29,8 @@ export default function DashboardHeader({
         <div
           className="w-10 h-10 rounded-xl flex items-center justify-center"
           style={{
+            // §3.44 theme-aware: el gradient ahora resuelve via CSS vars.
+            // En light theme, los 2 stops flipean automáticamente al Rena.
             background: `linear-gradient(135deg, ${C.renewable}, ${C.live})`,
           }}
         >
@@ -47,12 +49,16 @@ export default function DashboardHeader({
           </p>
         </div>
       </div>
-      <div
-        className="flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] font-medium"
-        style={{ borderColor: C.border, color: C.muted }}
-      >
-        <CalendarDays size={13} />
-        Del {formatted}
+      <div className="flex items-center gap-2">
+        <div
+          className="flex items-center gap-2 px-3 py-1.5 rounded-full border text-[11px] font-medium"
+          style={{ borderColor: C.border, color: C.muted }}
+        >
+          <CalendarDays size={13} />
+          Del {formatted}
+        </div>
+        {/* §3.44 NEW — Theme toggle (sol/luna) + persistencia localStorage */}
+        <ThemeToggle />
       </div>
     </div>
   );

@@ -2,24 +2,50 @@
 
 /* Fonts cargados vía <link rel="preconnect"> + <link rel="stylesheet"> en index.html
    para evitar el FOUC que produciría el @import de CSS (que bloquea hasta que
-   el stylesheet raíz termine de descargarse). */
+   stylesheet raíz termine de descargarse). */
 
+/* ─── DARK MODE (default) ────────────────────────────────────────────────── */
 :root {
-  /* Design tokens — alias de `frontend/src/libs/design-tokens.ts`. */
+  /* Neutrals */
   --c-bg: #0a0f1c;
   --c-surface: #101828;
   --c-surface-alt: #0d1420;
   --c-border: #1e2a42;
   --c-text: #eaf0fb;
   --c-muted: #7c8ba6;
+
+  /* Semantic families */
   --c-renewable: #34d399;
   --c-renewable-dim: #1f5a46;
-  /* [MIGRATED F2.1] non-renewable shifted purple per Phase 2 palette */
   --c-non-renewable: #8b5cf6;
   --c-non-renewable-dim: #3d2b66;
-  /* [MIGRATED F2.1] live: sky-blue → cyan; danger: red → pink */
+
+  /* Libre accents */
+  --c-accent-pink: #ff3d77;
+  --c-accent-purple: #8b5cf6;
+  --c-accent-cyan: #22d3ee;
+  --c-accent-gold: #ffc93c;
+  --c-accent-orange: #ff8a3d;
+
+  /* Status / context */
   --c-live: #22d3ee;
   --c-danger: #ff3d77;
+
+  /* text-on-color complements (for chips/badges sobre fondos brillantes) */
+  --c-text-on-danger: #1a0606;
+  --c-text-on-renewable: #062017;
+  --c-text-on-live: #04222f;
+
+  /* Alpha tokens via color-mix — soporta `${C.X}NN` template patterns previos
+     sin requerir literales hex hardcoded en componentes. Tema-reactivo
+     automáticamente: el 10% de cualquier color flippea con el theme. */
+  --c-muted-soft: color-mix(in srgb, var(--c-muted) 10%, transparent);
+  --c-muted-pill: color-mix(in srgb, var(--c-muted) 15%, transparent);
+  --c-live-soft: color-mix(in srgb, var(--c-live) 10%, transparent);
+  --c-accent-gold-soft: color-mix(in srgb, var(--c-accent-gold) 8%, transparent);
+  --c-accent-gold-faint: color-mix(in srgb, var(--c-accent-gold) 5%, transparent);
+  --c-accent-gold-pill: color-mix(in srgb, var(--c-accent-gold) 15%, transparent);
+  --c-accent-gold-edge: color-mix(in srgb, var(--c-accent-gold) 33%, transparent);
 
   --tw-bg-opacity: 1;
   --tw-text-opacity: 1;
@@ -29,6 +55,40 @@
   font-family: "Inter", sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* ─── LIGHT MODE (override via [data-theme="light"]) ─────────────────────── */
+/* Light palette deriv. del Figma kit "Full Charts Components" variant
+   card-chart-layout-colors (Phase 2 § 3.29 references). Variantes oscuras
+   (live/danger/renewable/nonRenewable oscurecidas para contrast WCAG AA
+   sobre fondo claro). */
+:root[data-theme="light"] {
+  --c-bg: #f4f6fa;
+  --c-surface: #ffffff;
+  --c-surface-alt: #eef1f6;
+  --c-border: #e1e5ee;
+  --c-text: #0f172a;
+  --c-muted: #64748b;
+
+  --c-renewable: #059669;
+  --c-renewable-dim: #d1fae5;
+  --c-non-renewable: #7c3aed;
+  --c-non-renewable-dim: #ede9fe;
+
+  --c-accent-pink: #dc2626;
+  --c-accent-purple: #7c3aed;
+  --c-accent-cyan: #0891b2;
+  --c-accent-gold: #d97706;
+  --c-accent-orange: #ea580c;
+
+  --c-live: #0891b2;
+  --c-danger: #dc2626;
+
+  /* text-on-color en light: blanco puro sobre los fondos semánticos
+     oscurecidos (todos los pares superaban WCAG AA 4.5:1 — §3.44). */
+  --c-text-on-danger: #ffffff;
+  --c-text-on-renewable: #ffffff;
+  --c-text-on-live: #ffffff;
 }
 
 html,

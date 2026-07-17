@@ -1,5 +1,11 @@
 import type { ComponentType, ReactNode } from "react";
-import { C } from "../../libs/design-tokens";
+import { useEffect, useState } from "react";
+import {
+  C,
+  THEME_STORAGE_KEY,
+  DEFAULT_THEME,
+  type Theme,
+} from "../../libs/design-tokens";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Card wrapper — mirror exacto del bloque Card del mockup aprobado.
@@ -345,3 +351,82 @@ export const ICONS = {
   CalendarDays,
   ChevronDown,
 } as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §3.44 NEW — Theme toggle icons + ThemeToggle component.
+//
+// Sun (light mode target) + Moon (dark mode target) — inline SVG, mismo
+// patrón que el resto de iconos (Lucide API shim por §3.22, NO lucide-react).
+//
+// `ThemeToggle` toggles `data-theme` en <html> y persiste en localStorage
+// (`ree-view-theme`). El componente SOLO render del icono + label;
+// el cambio visual del backdrop es automático via CSS `var(--c-*)` cascade.
+// FOUC-prevent sincronizado se hace en `index.html` <script> que aplica
+// el tema desde localStorage ANTES que React hidrate.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const Sun = Object.assign(
+  createIcon({
+    paths: (
+      <>
+        <circle cx="12" cy="12" r="4" />
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
+      </>
+    ),
+  }),
+  { displayName: "Sun" },
+);
+
+export const Moon = Object.assign(
+  createIcon({
+    paths: (
+      <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z" />
+    ),
+  }),
+  { displayName: "Moon" },
+);
+
+// Icono renderado en el toggle: muestra el destino (dónde va a ir),
+// no el estado actual. Convenção común: sol = switching TO light, luna
+// = switching TO dark. El label textual al lado confirma el estado actual.
+
+interface ThemeToggleProps {
+  className?: string;
+}
+
+export function ThemeToggle({ className = "" }: ThemeToggleProps) {
+  const [theme, setTheme] = useState<Theme>(() => {
+    if (typeof window === "undefined") return DEFAULT_THEME;
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return stored === "light" || stored === "dark" ? stored : DEFAULT_THEME;
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // localStorage puede estar deshabilitado (modo privado Safari, etc).
+      // El toggle sigue funcionando en memoria durante esta sesión.
+    }
+  }, [theme]);
+
+  const next: Theme = theme === "dark" ? "light" : "dark";
+  const label = `Cambiar a tema ${next === "dark" ? "oscuro" : "claro"}`;
+
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(next)}
+      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[11px] font-medium transition-opacity hover:opacity-80 active:opacity-60 ${className}`}
+      style={{ borderColor: C.border, color: C.muted }}
+      aria-label={label}
+      title={label}
+      data-testid="theme-toggle"
+      data-current-theme={theme}
+    >
+      {next === "light" ? <Sun size={13} /> : <Moon size={13} />}
+      {next === "light" ? "Claro" : "Oscuro"}
+    </button>
+  );
+}
