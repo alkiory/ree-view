@@ -90,7 +90,7 @@ export default function MockLiveDemandCard() {
         <span
           className="relative flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold border"
           style={{
-            background: `${C.accentGold}26`,
+            background: C.accentGoldPill,
             color: C.accentGold,
             borderColor: C.accentGold,
           }}
@@ -117,8 +117,8 @@ export default function MockLiveDemandCard() {
           <div
             className="rounded-lg px-4 py-3 mb-4 border"
             style={{
-              background: `${C.accentGold}14`,
-              borderColor: `${C.accentGold}55`,
+              background: C.accentGoldSoft,
+              borderColor: C.accentGoldEdge,
             }}
             role="status"
             data-testid="mock-banner"
@@ -185,7 +185,7 @@ export default function MockLiveDemandCard() {
           style={{
             color: C.accentGold,
             borderColor: C.border,
-            background: `${C.accentGold}0D`,
+            background: C.accentGoldFaint,
           }}
           data-testid="mock-footer"
         >

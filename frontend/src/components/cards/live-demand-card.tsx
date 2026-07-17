@@ -18,6 +18,7 @@ import {
   regionDisplayToSlug,
   type LiveDemandRegion,
 } from "../../hooks/useLiveDemand";
+import { useChartTheme } from "../../hooks/useChartTheme";
 import { extractErrorDetail } from "../../libs/extract-error-detail";
 
 const formatTime = (date: Date): string => {
@@ -79,7 +80,7 @@ function Chip({ mode }: { mode: Mode }) {
       <span
         className="relative flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold border"
         style={{
-          background: `${C.muted}1A`,
+          background: C.mutedSoft,
           color: C.muted,
           borderColor: C.border,
         }}
@@ -99,7 +100,7 @@ function Chip({ mode }: { mode: Mode }) {
     return (
       <span
         className="relative flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold"
-        style={{ background: `${C.live}1A`, color: C.live }}
+        style={{ background: C.liveSoft, color: C.live }}
         data-testid="chip-live"
       >
         <span className="relative w-2 h-2">
@@ -118,7 +119,7 @@ function Chip({ mode }: { mode: Mode }) {
       <span
         className="relative flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold border"
         style={{
-          background: `${C.muted}26`,
+          background: C.mutedPill,
           color: C.muted,
           borderColor: C.border,
         }}
@@ -137,7 +138,7 @@ function Chip({ mode }: { mode: Mode }) {
     <span
       className="relative flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold border"
       style={{
-        background: `${C.muted}1A`,
+        background: C.mutedSoft,
         color: C.muted,
         borderColor: C.border,
       }}
@@ -322,6 +323,10 @@ function LiveDemandCardBody({
     dateYesterday,
     regionSlug,
   );
+  // §3.44 Phase 2 — recharts NO acepta strings `var(--c-X)` para fill/stroke
+  // (gradients canvas-internals). Resolvemos las vars a hex vía hex resolved
+  // hook suscripto al MutationObserver data-theme.
+  const chartTheme = useChartTheme();
 
   // Phase 2 §3.39 — discriminated mode (3 values) + renderedSnap
   // sin fallback mock. Si tanto live como historical están
@@ -335,6 +340,13 @@ function LiveDemandCardBody({
     regionSlug,
     dateYesterday,
   });
+
+  // Recharts theme colors derived AFTER `mode` (TDZ-safe). chartLineColor
+  // sigue la convención §3.39: live→cyan, historical→muted (desaturado).
+  const chartLineColor =
+    mode === "historical" ? chartTheme.muted : chartTheme.live;
+  const chartAxisColor = chartTheme.muted;
+  const chartBorderColor = chartTheme.border;
 
   // Final rendered snap used by chart, KPIs, footer.
   //   live       → snap limpio de REE.
@@ -383,7 +395,7 @@ function LiveDemandCardBody({
             type="button"
             onClick={() => refetchLiveDemand()}
             className="mt-3 px-3 py-1.5 rounded-lg text-[12px] font-semibold"
-            style={{ background: C.danger, color: "#1A0606" }}
+            style={{ background: C.danger, color: C.textOnDanger }}
           >
             Reintentar
           </button>
@@ -491,43 +503,43 @@ function LiveDemandCardBody({
                   >
                     <stop
                       offset="0%"
-                      stopColor={COLOR_FOR_MODE[mode]}
+                      stopColor={chartLineColor}
                       stopOpacity={0.35}
                     />
                     <stop
                       offset="100%"
-                      stopColor={COLOR_FOR_MODE[mode]}
+                      stopColor={chartLineColor}
                       stopOpacity={0}
                     />
                   </linearGradient>
                 </defs>
                 <XAxis
                   dataKey="h"
-                  stroke={C.muted}
-                  tick={{ fontSize: 11, fill: C.muted }}
-                  axisLine={{ stroke: C.border }}
+                  stroke={chartAxisColor}
+                  tick={{ fontSize: 11, fill: chartAxisColor }}
+                  axisLine={{ stroke: chartBorderColor }}
                   tickLine={false}
                 />
                 <YAxis
-                  stroke={C.muted}
-                  tick={{ fontSize: 11, fill: C.muted }}
+                  stroke={chartAxisColor}
+                  tick={{ fontSize: 11, fill: chartAxisColor }}
                   axisLine={false}
                   tickLine={false}
                   width={44}
                 />
                 <Tooltip
                   contentStyle={{
-                    background: C.surfaceAlt,
-                    border: `1px solid ${C.border}`,
+                    background: chartTheme.surfaceAlt,
+                    border: `1px solid ${chartBorderColor}`,
                     borderRadius: 10,
                     fontSize: 12,
                   }}
-                  labelStyle={{ color: C.muted }}
+                  labelStyle={{ color: chartAxisColor }}
                 />
                 <Area
                   type="monotone"
                   dataKey="prevista"
-                  stroke={C.muted}
+                  stroke={chartAxisColor}
                   strokeDasharray="4 4"
                   fill="none"
                   strokeWidth={1.5}
@@ -536,7 +548,7 @@ function LiveDemandCardBody({
                 <Area
                   type="monotone"
                   dataKey="real"
-                  stroke={COLOR_FOR_MODE[mode]}
+                  stroke={chartLineColor}
                   fill={`url(#${GRADIENT_ID_FOR_MODE[mode]})`}
                   strokeWidth={2.5}
                   isAnimationActive={false}
@@ -664,7 +676,7 @@ function RegionPills({
             className="px-3 py-1.5 rounded-md text-[12px] font-medium transition-opacity hover:opacity-90 focus:outline-none"
             style={{
               background: isActive ? C.live : "transparent",
-              color: isActive ? "#04222F" : C.muted,
+              color: isActive ? C.textOnLive : C.muted,
               cursor: origin === "error" ? "not-allowed" : "pointer",
             }}
           >

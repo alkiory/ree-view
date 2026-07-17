@@ -8,6 +8,7 @@ import {
 } from "recharts";
 import { Card, SectionLabel, Leaf, Factory } from "./primitives";
 import { C } from "../../libs/design-tokens";
+import { useChartTheme } from "../../hooks/useChartTheme";
 import { EnergyBalanceType } from "../../types/energy-balance.types";
 import { processGenerationData } from "../../libs/process-generation-data";
 
@@ -53,6 +54,11 @@ export default function GenerationCard({
   energyBalances,
 }: GenerationCardProps) {
   const generationData = processGenerationData(energyBalances);
+  // §3.44 Phase 2 — recharts RadialBar/Pie fill props resueltos vía
+  // useChartTheme hex resolved (see hooks/useChartTheme.ts). Sólo los
+  // PRIMARY fills cambian al chartTheme.value; los fallbacks `?? C.X`
+  // siguen apuntando a vars CSS para producción sin color attribute.
+  const chartTheme = useChartTheme();
   const renewableShare = generationData.totalRenewablePercentage || 0;
   const nonRenewableShare = 100 - renewableShare;
   const hasRenewable = generationData.renewable.length > 0;
@@ -79,8 +85,8 @@ export default function GenerationCard({
               <RadialBar
                 dataKey="value"
                 cornerRadius={20}
-                fill={C.renewable}
-                background={{ fill: C.surfaceAlt }}
+                fill={chartTheme.renewable}
+                background={{ fill: chartTheme.surfaceAlt }}
                 max={100}
                 isAnimationActive={animate()}
               />
@@ -163,7 +169,7 @@ export default function GenerationCard({
                   key={d.type}
                   name={d.title ?? d.type}
                   pct={d.percentage}
-                  color={(d.color as string) ?? C.renewable}
+                  color={(d.color as string) ?? chartTheme.renewable}
                 />
               ))}
             </div>
@@ -210,7 +216,7 @@ export default function GenerationCard({
                   key={d.type}
                   name={d.title ?? d.type}
                   pct={d.percentage}
-                  color={(d.color as string) ?? C.nonRenewable}
+                  color={(d.color as string) ?? chartTheme.nonRenewable}
                 />
               ))}
             </div>
