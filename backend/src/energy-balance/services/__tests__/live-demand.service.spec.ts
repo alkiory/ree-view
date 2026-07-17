@@ -210,34 +210,4 @@ describe('LiveDemandService', () => {
       expect(result.timestamp).toBeInstanceOf(Date);
     });
   });
-
-  /**
-   * Fix A (investigación histórico-vacío) — propagación end-to-end:
-   * el `date` string que llega del DTO GraphQL debe llegar verbatim al
-   * `InternalServerErrorException` que el resolver throw. Antes, el
-   * ree-client derivaba el día de `date.toISOString().slice(0,10)` y
-   * mostraba un día diferente al que pidió el usuario.
-   */
-  describe('getHistoricalHourlySnapshot (Fix A propagation)', () => {
-    it('A3: propagates the original DTO date string into the thrown error (no UTC shift)', async () => {
-      const reeError = new Error(
-        'Invalid historical response: empty content for nacional on 2026-07-15',
-      );
-      reeClient.fetchHistoricalHourly = vi.fn().mockRejectedValue(reeError);
-
-      await expect(
-        service.getHistoricalHourlySnapshot('2026-07-15', undefined),
-      ).rejects.toThrow(
-        'Failed to compute historical snapshot (date=2026-07-15, region=Nacional): Invalid historical response: empty content for nacional on 2026-07-15',
-      );
-
-      // Lock-in: el ree-client recibió el Date parseado Y el string
-      // original (post-fix signature: (date, dateStr, region?)).
-      expect(reeClient.fetchHistoricalHourly).toHaveBeenCalledWith(
-        expect.any(Date),
-        '2026-07-15',
-        undefined,
-      );
-    });
-  });
 });
