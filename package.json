@@ -4,8 +4,5 @@
   "private": true,
   "dependencies": {
     "@apollo/server": "^4.13.0"
-  },
-  "onlyBuiltDependencies": [
-    "@apollo/protobufjs"
-  ]
+  }
 }
