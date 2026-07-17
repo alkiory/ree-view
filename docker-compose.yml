@@ -2,9 +2,9 @@ services:
   backend:
     build: ./backend
     ports:
-      - '3000:3000'
+      - '5001:5001'
     environment:
-      PORT: 3000
+      PORT: 5001
       CORS_ORIGINS: http://localhost:5173,http://localhost:80
       MONGODB_URI: ${MONGODB_URI:-mongodb://mongo:27017/energy-balance}
       REE_API_URL: https://apidatos.ree.es/es/datos/balance/balance-electrico
@@ -16,16 +16,19 @@ services:
     # con @apollo/server, el contenedor se reinicia solo. Combinado con el
     # HEALTHCHECK del Dockerfile, Docker también lo apaga si las queries
     # a /graphql fallan 3 veces seguidas.
-    restart: unless-stopped
+    restart: always
     networks:
       - app-network
 
   frontend:
     build: ./frontend
-    ports:
-      - '80:80'
+    restart: always
+    expose:
+      - '3001'
     environment:
       - VITE_API_URL=/graphql
+      - NODE_ENV=production
+      - PORT=3001
     depends_on:
       - backend
     networks:
@@ -42,6 +45,9 @@ services:
     # retira esta línea para mantener el puerto interno.
     ports:
       - '27017:27017'
+    restart: always
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongo localhost:27017/energy-balance --quiet
     networks:
       - app-network
 
@@ -51,3 +57,5 @@ volumes:
 networks:
   app-network:
     driver: bridge
+  npm_network:
+    external: true
