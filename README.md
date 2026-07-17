@@ -1,6 +1,6 @@
 # Ree View — Balance Eléctrico Nacional
 
-Visualizador fullstack del **balance eléctrico del sistema eléctrico nacional español**, alimentado en tiempo real por la API pública de [REE (Red Eléctrica de España)](https://apidatos.ree.es/).
+Visualizador fullstack del **balance eléctrico del sistema eléctrico nacional español**, alimentado en tiempo real por la API pública de [REE (Red Eléctrica de España)](https://www.ree.es/es/datos/apidatos).
 
 Permite explorar **generación por tecnología**, **demanda**, **intercambios internacionales en fronteras** y **balance de almacenamiento**, filtrando por **rango de fechas** y **tipo de energía** (renovable vs. no-renovable).
 
