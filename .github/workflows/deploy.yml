@@ -40,6 +40,7 @@ jobs:
           # browser resuelve a https://alkiory.github.io/assets/... → 404 → pantalla blanca.
           # Vite la traduce en dist/index.html a /ree-view/assets/... correcto.
           VITE_BASE_URL: /ree-view/
+          VITE_API_URL: https://api-ree-view.alkiory.com/graphql
 
       - uses: actions/configure-pages@v5
 
