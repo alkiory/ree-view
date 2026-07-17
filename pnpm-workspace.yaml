@@ -1,3 +1,16 @@
+# pnpm 11 ya no lee settings de paquetes desde `pnpm.onlyBuiltDependencies`
+# en `package.json`, ni desde `only-built-dependencies=` en `.npmrc`. Para
+# workspaces, la allow-list de build scripts vive AQUÍ, junto a `packages`.
+# Si añades deps con postinstall nativo, actualiza esta misma lista o el
+# `pnpm install --frozen-lockfile` del CI reventará con ERR_PNPM_IGNORED_BUILDS.
+
 packages:
   - 'frontend'
   - 'backend'
+
+onlyBuiltDependencies:
+  - esbuild
+  - '@swc/core'
+  - '@nestjs/core'
+  - '@apollo/protobufjs'
+  - mongodb-memory-server
