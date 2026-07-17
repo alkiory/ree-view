@@ -7,10 +7,6 @@ import {
   type Theme,
 } from "../../libs/design-tokens";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Card wrapper — mirror exacto del bloque Card del mockup aprobado.
-// ─────────────────────────────────────────────────────────────────────────────
-
 interface CardProps {
   children: ReactNode;
   className?: string;
@@ -27,40 +23,33 @@ export function Card({ children, className = "" }: CardProps) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Sparkline — SVG polyline minimal para KPI sparklines (Phase 2).
-// INLINE SVG en lugar de recharts `<LineChart>` para evitar el overhead
-// de un `<ResponsiveContainer>` por sparkline × 4 KPIs (~5-10kB c/u).
-// Recharts ya está en bundle (GenerationCard), pero un polyline de 10
-// puntos es preferible: misma legibilidad visual, sin wrapper, y sin
-// triggers de animation-active en StrictMode (§3.17 CURRENT).
-// ─────────────────────────────────────────────────────────────────────────────
-
 interface SparklineProps {
   data: readonly number[];
   color: string;
   height?: number;
 }
 
+/**
+ * Sparkline SVG mínima para KPI (sustituye `<LineChart>` por inline
+ * SVG para evitar el overhead de un `<ResponsiveContainer>` por
+ * sparkline × 4 KPIs).
+ */
 export function Sparkline({ data, color, height = 32 }: SparklineProps) {
-  // Empty-data guard: evita viewBox NaN-coords si `data = []`.
   if (data.length === 0) {
     return <div style={{ height, width: "100%" }} aria-hidden="true" />;
   }
   const max = Math.max(...data);
   const min = Math.min(...data);
-  const range = max - min || 1; // evita div-by-zero en datasets flat
-  const w = 100; // viewBox width (logical units; preserveAspectRatio=none estira)
-  const h = 32; // viewBox height
+  const range = max - min || 1;
+  const w = 100;
+  const h = 32;
   const stepX = w / Math.max(data.length - 1, 1);
 
   const points = data.map((v, i) => {
     const x = i * stepX;
-    // Eje Y invertido: valor más alto arriba (Menor y = más arriba en SVG).
     const y = h - ((v - min) / range) * h;
     return `${x.toFixed(2)},${y.toFixed(2)}`;
   });
-  // Área rellena (gradiente sutil implícito): cerramos el polígono por abajo.
   const areaPoints = `${points.join(" ")} ${w.toFixed(2)},${h} 0,${h}`;
 
   return (
@@ -86,10 +75,6 @@ export function Sparkline({ data, color, height = 32 }: SparklineProps) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SectionLabel — bloque superior de cada card con icono + texto uppercase.
-// ─────────────────────────────────────────────────────────────────────────────
-
 interface SectionLabelProps {
   icon?: IconComponent;
   children: ReactNode;
@@ -109,10 +94,6 @@ export function SectionLabel({ icon: Icon, children }: SectionLabelProps) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// KPI — bloque individual para una métrica destacada.
-// ─────────────────────────────────────────────────────────────────────────────
-
 interface KPIProps {
   icon: IconComponent;
   label: string;
@@ -120,7 +101,6 @@ interface KPIProps {
   unit?: string;
   accent: string;
   sub?: string;
-  // Phase 2: sparkline inline (10 puntos). Si está, renderiza debajo del sub.
   spark?: readonly number[];
 }
 
@@ -178,13 +158,6 @@ export function KPI({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Inline SVG icons — equivalentes exactos de lucide-react (Zap, Gauge,
-// ArrowLeftRight, Battery, Leaf, Factory, Radio, CalendarDays, ChevronDown).
-// Decisión: replicar SVGs in-house en vez de añadir la dependencia para
-// mantener el árbol de depsestable y reducir bundle.
-// ─────────────────────────────────────────────────────────────────────────────
-
 export interface IconProps {
   size?: number;
   color?: string;
@@ -229,9 +202,6 @@ function createIcon({
   return Icon;
 }
 
-// Cada export fija su displayName desde el nombre del icono para que
-// React DevTools los distinga (todos comparten la firma IconComponent
-// de createIcon arriba).
 export const Zap = Object.assign(
   createIcon({
     paths: <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />,
@@ -352,19 +322,6 @@ export const ICONS = {
   ChevronDown,
 } as const;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// §3.44 NEW — Theme toggle icons + ThemeToggle component.
-//
-// Sun (light mode target) + Moon (dark mode target) — inline SVG, mismo
-// patrón que el resto de iconos (Lucide API shim por §3.22, NO lucide-react).
-//
-// `ThemeToggle` toggles `data-theme` en <html> y persiste en localStorage
-// (`ree-view-theme`). El componente SOLO render del icono + label;
-// el cambio visual del backdrop es automático via CSS `var(--c-*)` cascade.
-// FOUC-prevent sincronizado se hace en `index.html` <script> que aplica
-// el tema desde localStorage ANTES que React hidrate.
-// ─────────────────────────────────────────────────────────────────────────────
-
 export const Sun = Object.assign(
   createIcon({
     paths: (
@@ -386,14 +343,15 @@ export const Moon = Object.assign(
   { displayName: "Moon" },
 );
 
-// Icono renderado en el toggle: muestra el destino (dónde va a ir),
-// no el estado actual. Convenção común: sol = switching TO light, luna
-// = switching TO dark. El label textual al lado confirma el estado actual.
-
 interface ThemeToggleProps {
   className?: string;
 }
 
+/**
+ * Toggle de tema claro/oscuro. Persiste en `localStorage` y muta
+ * `data-theme` en `<html>` (CSS `var(--c-*)` resuelve el flip sin
+ * re-render de React). FOUC-prevent se hace en `index.html`.
+ */
 export function ThemeToggle({ className = "" }: ThemeToggleProps) {
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window === "undefined") return DEFAULT_THEME;
@@ -407,7 +365,6 @@ export function ThemeToggle({ className = "" }: ThemeToggleProps) {
       window.localStorage.setItem(THEME_STORAGE_KEY, theme);
     } catch {
       // localStorage puede estar deshabilitado (modo privado Safari, etc).
-      // El toggle sigue funcionando en memoria durante esta sesión.
     }
   }, [theme]);
 

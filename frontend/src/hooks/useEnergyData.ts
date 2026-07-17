@@ -8,8 +8,21 @@ interface UseEnergyDataResult {
   errorEnergy: any;
   energyData: { getEnergyBalances: EnergyBalanceType[] } | undefined;
   refetchEnergy: (variables?: QueryVariables) => Promise<any>;
-}  const useEnergyData = (startDate: string, endDate: string, groupId?: string | null, type?: string | null, groupType?: string | null): UseEnergyDataResult => {
-  const { loading: loadingEnergy, error: errorEnergy, data: energyData, refetch: refetchEnergy } = useQuery<{ getEnergyBalances: EnergyBalanceType[] }, QueryVariables>(
+}
+
+const useEnergyData = (
+  startDate: string,
+  endDate: string,
+  groupId?: string | null,
+  type?: string | null,
+  groupType?: string | null,
+): UseEnergyDataResult => {
+  const {
+    loading: loadingEnergy,
+    error: errorEnergy,
+    data: energyData,
+    refetch: refetchEnergy,
+  } = useQuery<{ getEnergyBalances: EnergyBalanceType[] }, QueryVariables>(
     GET_ENERGY_DATA,
     {
       variables: {
@@ -22,10 +35,6 @@ interface UseEnergyDataResult {
         },
       },
       onError: (error) => {
-        // Sólo logueamos campos serializables. Pasar el `error` entero
-        // a console puede triggear `Converting circular structure to JSON`
-        // cuando Apollo internamente tiene un entrypoint que JSON.stringifica
-        // el mensaje del error.
         console.error('GraphQL Error (Energy):', {
           name: error?.name,
           message: error?.message,
@@ -34,7 +43,7 @@ interface UseEnergyDataResult {
         });
       },
       errorPolicy: 'all',
-    }
+    },
   );
 
   return { loadingEnergy, errorEnergy, energyData, refetchEnergy };

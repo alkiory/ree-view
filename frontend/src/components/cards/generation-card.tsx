@@ -12,9 +12,6 @@ import { useChartTheme } from "../../hooks/useChartTheme";
 import { EnergyBalanceType } from "../../types/energy-balance.types";
 import { processGenerationData } from "../../libs/process-generation-data";
 
-// `isAnimationActive={false}` en DEV mitiga el doble-mount de React Strict
-// Mode que produce "jitter" de animación en recharts (ver CURRENT.md §3.17
-// nota complementaria sobre React 19).
 const animate = (): false | undefined =>
   import.meta.env.DEV ? false : undefined;
 
@@ -54,10 +51,6 @@ export default function GenerationCard({
   energyBalances,
 }: GenerationCardProps) {
   const generationData = processGenerationData(energyBalances);
-  // §3.44 Phase 2 — recharts RadialBar/Pie fill props resueltos vía
-  // useChartTheme hex resolved (see hooks/useChartTheme.ts). Sólo los
-  // PRIMARY fills cambian al chartTheme.value; los fallbacks `?? C.X`
-  // siguen apuntando a vars CSS para producción sin color attribute.
   const chartTheme = useChartTheme();
   const renewableShare = generationData.totalRenewablePercentage || 0;
   const nonRenewableShare = 100 - renewableShare;
@@ -70,7 +63,6 @@ export default function GenerationCard({
       className="grid grid-cols-1 lg:grid-cols-[260px_1fr_1fr] gap-4"
       data-testid="generation-card"
     >
-      {/* Gauge central — Cuota renovable */}
       <Card>
         <SectionLabel icon={Leaf}>Cuota renovable</SectionLabel>
         <div className="relative h-[210px] flex items-center justify-center">
@@ -131,7 +123,6 @@ export default function GenerationCard({
         </div>
       </Card>
 
-      {/* Donut renovable */}
       <Card>
         <SectionLabel icon={Leaf}>Generación renovable</SectionLabel>
         {hasRenewable ? (
@@ -149,11 +140,6 @@ export default function GenerationCard({
                   >
                     {generationData.renewable.map((d, i) => (
                       <Cell
-                        // Production wedge path: NO use `resolveMixColor()`
-                        // (Phase 2 §3.30) — production data lacks `colorIndex`.
-                        // Color viene del API MongoDB `attributes.color` (REE
-                        // catalog), con `renewableDim`/`nonRenewableDim` como
-                        // fallback defensivo si llega null/undefined.
                         key={`${d.type}-${i}`}
                         fill={(d.color as string) ?? C.renewableDim}
                         stroke="none"
@@ -181,7 +167,6 @@ export default function GenerationCard({
         )}
       </Card>
 
-      {/* Donut no renovable */}
       <Card>
         <SectionLabel icon={Factory}>Generación no renovable</SectionLabel>
         {hasNonRenewable ? (
@@ -199,8 +184,6 @@ export default function GenerationCard({
                   >
                     {generationData.nonRenewable.map((d, i) => (
                       <Cell
-                        // Production wedge path: NO use `resolveMixColor()`
-                        // (Phase 2 §3.30) — production data lacks `colorIndex`.
                         key={`${d.type}-${i}`}
                         fill={(d.color as string) ?? C.nonRenewableDim}
                         stroke="none"

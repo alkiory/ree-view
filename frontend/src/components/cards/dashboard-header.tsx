@@ -2,8 +2,8 @@ import { CalendarDays, Zap, ThemeToggle } from "./primitives";
 import { C } from "../../libs/design-tokens";
 
 interface DashboardHeaderProps {
-  startDate: string; // ISO 'YYYY-MM-DD'
-  endDate: string; // ISO 'YYYY-MM-DD'
+  startDate: string;
+  endDate: string;
 }
 
 const formatES = (isoDate: string): string => {
@@ -29,12 +29,9 @@ export default function DashboardHeader({
         <div
           className="w-10 h-10 rounded-xl flex items-center justify-center"
           style={{
-            // §3.44 theme-aware: el gradient ahora resuelve via CSS vars.
-            // En light theme, los 2 stops flipean automáticamente al Rena.
             background: `linear-gradient(135deg, ${C.renewable}, ${C.live})`,
           }}
         >
-          {/* Phase 2 §3.30 cleanup: hex literal → C.bg token ref. */}
           <Zap size={19} color={C.bg} strokeWidth={2.5} />
         </div>
         <div>
@@ -57,7 +54,6 @@ export default function DashboardHeader({
           <CalendarDays size={13} />
           Del {formatted}
         </div>
-        {/* §3.44 NEW — Theme toggle (sol/luna) + persistencia localStorage */}
         <ThemeToggle />
       </div>
     </div>

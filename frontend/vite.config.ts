@@ -2,31 +2,12 @@ import { defineConfig } from 'vitest/config'
 import react from '@vitejs/plugin-react-swc'
 import tailwindcss from '@tailwindcss/vite'
 
-// https://vite.dev/config/
-//
-// Proxy `/graphql` (mismo path que usa `frontend/src/libs/apollo-client.ts`
-// cuando `VITE_API_URL` no está seteado) hacia el backend NestJS durante
-// `pnpm dev`. Esto evita:
-//
-//   • CORS — el browser ve solo /:5173 (mismo origen).
-//   • DNS `backend` — no se resuelve desde el browser; la resolución
-//     la hace Vite internamente hacia el BACKEND_URL configurado.
-//
-// Resolución del target (en orden de precedencia):
-//   1. `BACKEND_URL`    → e.g. `BACKEND_URL=http://localhost:3001 pnpm dev`
-//                          (devs locales con el backend `pnpm dev PORT=3001`)
-//   2. `VITE_API_URL`   → si el dev quiere compatibilidad con el bundle
-//                          docker, puede exportar `VITE_API_URL=http://...`
-//                          y Vite lo apuntará allí. Útil para reproducir
-//                          bugs de staging sin abrir firewall.
-//   3. default          → `http://localhost:3000` (NEST_PORT default).
-//
-// En Docker (`pnpm build` + nginx), este proxy NO se ejecuta: nginx
-// resuelve la ruta directamente contra el hostname `backend`. Por eso
-// el default solo aplica a `pnpm dev`.
+// Proxy `/graphql` hacia el backend NestJS durante `pnpm dev` (resuelve
+// CORS y la resolución DNS `backend` que el browser no puede hacer).
+// Target: `BACKEND_URL` > `VITE_API_URL` > `http://localhost:3000`.
 const proxyTarget = (() => {
   const raw = process.env.BACKEND_URL || process.env.VITE_API_URL || 'http://localhost:3000'
-  return raw.replace(/\/+$/, '') // strip trailing slashes
+  return raw.replace(/\/+$/, '')
 })()
 
 export default defineConfig({
@@ -38,9 +19,6 @@ export default defineConfig({
       '/graphql': {
         target: proxyTarget,
         changeOrigin: true,
-        // `ws: true` para `graphql-ws` cuando se añada subscriptions
-        // (hoy @nestjs/apollo@12 aún no las soporta por default pero
-        // dejamos abierto el path para WebSocket upgrades).
         ws: true,
         configure(proxy) {
           proxy.on('error', (err) => {
@@ -53,9 +31,6 @@ export default defineConfig({
       },
     },
   },
-  // Vitest config — Vitest auto-detects a `test` block here, no need
-  // for a separate vitest.config.ts file. Excluded files match the
-  // backend convention (§vitest.config.ts) so coverage stays consistent.
   test: {
     include: ['src/**/*.spec.ts'],
     exclude: ['node_modules', 'dist'],
@@ -65,13 +40,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html'],
       include: ['src/**/*.ts'],
-      exclude: [
-        'src/**/*.spec.ts',
-        'src/main.tsx',
-        // `__tests__/` directories are exposed under `include: src/**/*.ts`
-        // via the type narrowing pattern; coverage modules already exclude
-        // spec files; main.tsx excluded because es bootstrap puro sin lógica.
-      ],
+      exclude: ['src/**/*.spec.ts', 'src/main.tsx'],
     },
   },
 })

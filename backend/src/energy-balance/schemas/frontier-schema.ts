@@ -43,13 +43,6 @@ export class Frontera extends Document {
 
 export const FronteraSchema = SchemaFactory.createForClass(Frontera);
 
-// TTL de 24h sobre `createdAt` (autogenerado por `timestamps: true` en la
-// clase Frontera). ESTE índice es el substituto correcto al propuesto
-// inicialmente sobre `endDate`/`startDate` porque esos son campos
-// HISTÓRICOS: si el usuario consulta datos de 2023, el `endDate` ya está
-// en el pasado y MongoDB expira el documento inmediatamente, destruyendo
-// la caché antes de que pueda ser reutilizada. `createdAt` mide tiempo
-// desde la inserción, que sí es relativo al presente.
 const CACHE_TTL_SECONDS = Number(process.env.CACHE_TTL_SECONDS) || 86_400;
 FronteraSchema.index(
   { createdAt: 1 },

@@ -4,13 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { IsMaxDaysRange } from '../is-max-days-range.validator';
 
 /**
- * Tests run through class-validator's `validateSync` (not by calling the
- * decorator's validator function directly) so that a future regression in
- * `registerDecorator` wiring fails loudly instead of silently passing.
+ * Tests vía `validateSync` (no llamada directa al decorator) para que
+ * un regression en `registerDecorator` falle loud, no silent.
  *
- * `RangeDto` exposes only the field decorated with `@IsMaxDaysRange` to
- * isolate the contract of that rule; other validators (IsString/Matches)
- * live on the consumer DTOs and are covered by resolver E2E tests.
+ * `RangeDto` aísla sólo el campo decorado con `@IsMaxDaysRange`. Otros
+ * validators (IsString/Matches) viven en los DTOs consumidores y los
+ * cubren los tests E2E de los resolvers.
  */
 
 class RangeDto {

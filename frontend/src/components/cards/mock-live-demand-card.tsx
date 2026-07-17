@@ -5,27 +5,6 @@ import type {
   LiveDemandData,
 } from "../../hooks/useLiveDemand";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Phase 2 §3.39 — MOCK FALLBACK (opt-in, isolated component).
-//
-// PROPÓSITO: salvavidas para desarrollo offline / sandbox sin acceso a
-// apiDatos.ree.es. NUNCA se renderiza en producción a menos que el
-// operador active explícitamente `VITE_ENABLE_MOCK_FALLBACK=true`.
-//
-// Diferencias vs §3.32 (auto-fallback dentro de LiveDemandCard):
-//   1. Es un COMPONENTE separado (no un mode dentro de LiveDemandCard).
-//   2. Se monta a nivel App.tsx, NO dentro del árbol de EnergyChart.
-//   3. Los datos sintéticos viven DENTRO del archivo (no exportados),
-//      blast radius = 1 archivo.
-//   4. UI deliberadamente "DEMO": chip dorado prominente, badge
-//      "DATOS SINTÉTICOS · NO REALES" en footer, sin Recharts (sólo
-//      KPIs estáticos + lista textual de horas). Cero ambigüedad.
-//
-// Shape DEMO_CURVE (24 horas, MW): curva plausible de demanda
-// española — mínimo 4-5am (~17.5 GW), pico vespertino 20h (~36 GW).
-// `real === prevista` (no tenemos forecast sintético por separado).
-// ─────────────────────────────────────────────────────────────────────────────
-
 const DEMO_CURVE: readonly DemandCurvePoint[] = [
   { h: "00h", real: 22500, prevista: 22500 },
   { h: "01h", real: 21000, prevista: 21000 },
@@ -122,24 +101,23 @@ export default function MockLiveDemandCard() {
             }}
             role="status"
             data-testid="mock-banner"
-          >
-            <p
-              className="text-[12px] font-semibold"
-              style={{ color: C.accentGold }}
-            >
-              ⚠ MOCK MODE activo
-            </p>
-            <p
-              className="text-[11px] mt-1"
-              style={{ color: C.muted }}
-            >
-              <code style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
-                VITE_ENABLE_MOCK_FALLBACK=true
-              </code>{" "}
-              está activado. Los datos mostrados son SINTÉTICOS y NO
-              provienen de apiDatos.ree.es. Desactiva la variable de
-              entorno para volver a datos reales.
-            </p>
+          >              <p
+                className="text-[12px] font-semibold"
+                style={{ color: C.accentGold }}
+              >
+                ⚠ Modo demostración activo
+              </p>
+              <p
+                className="text-[11px] mt-1"
+                style={{ color: C.muted }}
+              >
+                <code style={{ fontFamily: "'IBM Plex Mono', monospace" }}>
+                  VITE_ENABLE_MOCK_FALLBACK=true
+                </code>{" "}
+                está activado. Los datos mostrados son sintéticos y no
+                provienen de apiDatos.ree.es. Desactiva la variable de
+                entorno para volver a datos reales.
+              </p>
           </div>
 
           <div
@@ -188,6 +166,7 @@ export default function MockLiveDemandCard() {
             background: C.accentGoldFaint,
           }}
           data-testid="mock-footer"
+          aria-label="Aviso de datos sintéticos"
         >
           <span
             className="w-2 h-2 rounded-full"
@@ -195,7 +174,7 @@ export default function MockLiveDemandCard() {
             aria-hidden
           />
           <span style={{ fontWeight: 600 }}>
-            DATOS SINTÉTICOS · NO SON REALES · sólo para desarrollo offline
+            Datos sintéticos · sólo desarrollo offline
           </span>
         </div>
       </Card>

@@ -5,20 +5,13 @@ import {
 } from "../queries/live-demand.query";
 
 /**
- * Slug enum alineado 1:1 con `backend/src/energy-balance/dto/live-demand.input.ts:LiveDemandRegionSlug`.
- * El frontend lo usa como `useState<LiveDemandRegion>`. Cualquier
- * adición al enum backend requiere duplicar aquí + cross-checkear
- * `frontend/src/libs/design-tokens.ts:REGIONS`.
- *
- * Solo valores kebab-case (lo que la query variable + backend aceptan).
+ * Slugs canónicos de las regiones eléctricas (Nacional / Peninsular /
+ * Baleares / Canarias / Ceuta / Melilla).
  */
 export type LiveDemandRegion =
   "NACIONAL" | "PENINSULAR" | "BALEARES" | "CANARIAS" | "CEUTA" | "MELILLA";
 
-/**
- * Display names alineados 1:1 con `frontend/src/libs/design-tokens.ts:REGIONS`.
- * El mapping display → slug está en `regionDisplayToSlug()` abajo.
- */
+/** Mapping display → slug de las regiones. */
 export const REGION_DISPLAY_TO_SLUG: Readonly<
   Record<string, LiveDemandRegion>
 > = {
@@ -30,13 +23,7 @@ export const REGION_DISPLAY_TO_SLUG: Readonly<
   Melilla: "MELILLA",
 };
 
-/**
- * Tipo de fila de la curva devuelta por `getLiveSnapshot`.
- *
- * Mantenido alineado con `BackendDTO.DemandCurvePoint` en
- * `backend/src/energy-balance/dto/live-demand.type.ts`. Si añades un
- * campo allí, añádelo también aquí y en `live-demand-card.tsx`.
- */
+/** Punto de la curva horaria de demanda. */
 export interface DemandCurvePoint {
   h: string;
   real: number;
@@ -48,28 +35,16 @@ export interface LiveDemandData {
   maxForecastMW: number;
   minTodayMW: number;
   renewablePercentageValue: number;
-  timestamp: string; // ISO 8601 from GraphQL Date scalar
+  timestamp: string;
   region?: LiveDemandRegion | null;
   demandCurve: DemandCurvePoint[];
   co2Emissions?: string | null;
 }
 
 /**
- * Hook Apollo para la sección «Datos en tiempo real».
- *
- * Phase 2 §3.31 update:
- *   - Acepta `region?: LiveDemandRegion` arg. Pasarlo o cambiarlo dispara
- *     Apollo `refetch` automáticamente porque la variable `$region` cambia.
- *   - `pollInterval: 60000` mantiene freshness con la cadencia de REE
- *     (~5min) sin saturar el throttler global (30 req/min).
- *   - Region pills onClick → setState → `useLiveDemand(newRegion)`
- *     AUTOMÁTICAMENTE emite la query con nuevo `$region` y el cache
- *     per-region key de Mongo evita storming.
- *
- * Por qué NO declaramos `errorPolicy: 'all'` aquí:
- *   el error se loggea en consola y Apollo lo propaga al componente;
- *   `live-demand-card.tsx` renderiza error state con
- *   `extractErrorDetail(error)` (mismo patrón que `energy-error-state.tsx`).
+ * Hook Apollo para la sección «Datos en tiempo real». Poll de 60s
+ * sin saturar el throttler (30 req/min). El cambio de `region`
+ * dispara un refetch automático.
  */
 export const useLiveDemand = (
   region?: LiveDemandRegion,
@@ -108,19 +83,9 @@ export const useLiveDemand = (
 };
 
 /**
- * Phase 2 §3.31 — historical hourly archive hook.
- *
- * Recibe `date: string` (YYYY-MM-DD) y opcionalmente `region`. Sólo
- * se llama cuando el live snapshot está degraded (ver
- * `<HistoricalFallback />` en `live-demand-card.tsx`).
- *
- * Por qué separado del hook live:
- *   - El query es GraphQL distinto (`GET_HISTORICAL_HOURLY`).
- *   - El polling NO aplica: la data histórica no cambia. Sólo se
- *     re-fetchea si el usuario cambia region manualmente.
- *
- * Mantiene `date` en su firma porque el backend exige `String` (no
- * `Date`); el cliente computa "yesterday" localmente y lo manda.
+ * Hook para snapshot histórico horaria (ayer por defecto). Sólo
+ * invoca cuando el live está degraded; el polling no aplica porque
+ * la data histórica no cambia. `date` es `YYYY-MM-DD`.
  */
 export const useHistoricalHourly = (
   date: string,
@@ -162,32 +127,13 @@ export const useHistoricalHourly = (
 };
 
 /**
- * Phase 2 §3.31 — fecha "ayer" en ISO 8601 (YYYY-MM-DD) para
- * `useHistoricalHourly`. Timezone-aware via `Date` constructor.
- *
- * Por qué zona local del browser (no UTC):
- *   El usuario ve la curva histórica del día ANTERIOR a su
- *   timezone, no al UTC de REE. Coincide con la intuición universal.
- *
- * POR QUÉ NO usamos `toISOString().slice(0, 10)` (UTC date):
- *   `toISOString()` siempre retorna en UTC. Para un usuario en
- *   Madrid (UTC+1/+2 según DST), a las 00:30 local el UTC actual
- *   todavía es `T23:30:00Z` del día anterior → `slice(0,10)` da
- *   AYER-EN-UTC, no ayer-en-local. Riesgo de mostrar la curva de
- *   anteayer en horas de madrugada.
- *   Los getters `getFullYear/getMonth/getDate` retornan componentes
- *   en zona LOCAL, así que el formato `YYYY-MM-DD` corresponde
- *   exactamente al calendario del usuario.
- *
- * POR QUÉ restamos 1 día con `setDate` (no restamos 24*60*60*1000ms):
- *   `setDate(now.getDate() - 1)` maneja correctamente DST boundaries
- *   (la resta de 24h puede perder/duplicar horas en cambios de horario).
+ * Devuelve la fecha "ayer" en ISO 8601 (`YYYY-MM-DD`) usando getters
+ * locales del browser (no UTC) para que coincida con el calendario
+ * del usuario.
  */
 export const yesterdayISODate = (): string => {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  // Componentes LOCAL: getFullYear/getMonth/getDate viven en tz del
-  // browser. No usar `toISOString()` que siempre opera en UTC.
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -195,58 +141,20 @@ export const yesterdayISODate = (): string => {
 };
 
 /**
- * Phase 2 §3.31 — detection de live snapshot degradado.
+ * Detecta si el snapshot live está degraded (para activar fallback
+ * histórico en la UI). Dos puertas OR: curva vacía (partial-degraded)
+ * o todos los sentinels en 0 (fully-degraded).
  *
- * Phase 2 §3.27 establece que `Promise.allSettled` pone `0` /
- * `[]` / `{renewablePercentageValue: 0}` cuando los 3 fetches REE
- * fallan en simultáneo. El frontend NO quiere mostrar la UI con
- * esos zeros porque es indistinguible de casos edge genuine (no es
- * sólo cero, es "REE down").
- *
- * §3.42 — partial-degraded detection. El backend service.ts§3.37
- * puede retornar un snapshot "incoherente" cuando
- * `buildDemandCurve(items)` lanza throw silencioso (count !=288
- * en polls tempranos 01:00-04:00 local) pero `lastReal.value` se
- * extrajo OK: curMW > 0, curve = []. El symptom visible era
- * "Demanda actual = Mínima del día = mismo X GW" + "Sin curva".
- * Ese caso NO entraba aquí porque el strict-AND legacy de §3.27
- * requiere todos los 3 sentinels en cero.
- *
- * §3.43 — count-flexible aggregation fix. Tras aceptar counts
- * múltiplos de 12 en `aggregateHourly` (12, 24, 144, 288), una curva
- * de exactamente 1 bucket es ahora data legítima en el primer poll
- * que complete la primera hora del día (~00:00-01:00 local).
- *
- * Estrategia (2 puertas OR) — umbral **estricto `=== 0`** post-§3.43:
- *   1. **§3.42 partial-degraded**: `curve.length === 0` — el bug
- *      "buildDemandCurve silencioso + lastReal preservado" siempre
- *      resulta en `curve = []` (porque el `catch { curve = [] }` del
- *      `live-demand.service.ts:162` es el único path hacia
- *      partial-degraded). Por tanto `=== 0` es suficiente y NO
- *      `< 2`: cazaría falsos positivos el primer poll del día
- *      cuando el usuario merece ver la curva corta pero real, no
- *      un fallback histórico (CONCERN #1 fix en este turn).
- *   2. **§3.27 legacy strict-AND**: `curMW === 0 && renewPct === 0
- *      && curve.length === 0` — preservado para el patrón REE
- *      completamente caído (3 fetches rechazan al unísono).
- *
- * Trade-off del cambio `< 2` → `=== 0` (§3.42 post-§3.43):
- *   Si en el futuro aparece un path donde el service emite
- *   `curve = [< 2 buckets]` con curMW extraído OK, este gate NO
- *   lo cazaría. Mitigación: monitoring del patrón
- *   `curMW > 0 && curve.length < 6` en logs de servicio; hoy no se
- *   observa ese path (verificado con `aggregateHourly` throwing →
- *   `catch` → `[]`).
+ * Umbral estricto `=== 0` (no `< 2`) porque desde que `aggregateHourly`
+ * acepta counts de madrugada ≥ 12, una curva de 1-11 buckets es data
+ * legítima temprana que el usuario merece ver, no un fallback histórico.
  */
 export const isDegradedSnapshot = (
   snap: LiveDemandData | undefined,
 ): boolean => {
   if (!snap) return false;
-  // §3.42 partial-degraded — curva vacía tras silent fail post-§3.43.
-  // (length === 1 ahora es data legítima temprana, NO fallback histórico.)
   const partialDegraded =
     Array.isArray(snap.demandCurve) && snap.demandCurve.length === 0;
-  // §3.27 legacy fully-degraded — todos los sentinels en 0.
   const fullyDegraded =
     snap.currentDemandMW === 0 &&
     snap.renewablePercentageValue === 0 &&
@@ -255,33 +163,9 @@ export const isDegradedSnapshot = (
   return partialDegraded || fullyDegraded;
 };
 
-/**
- * Convierte `REGIONS` display name (de `design-tokens.ts`) a slug
- * kebab-case (lo que el hook + query esperan). Lo separamos del
- * `useState` directo para que el call site sea explícito.
- */
+/** Convierte el display name de `REGIONS` (design-tokens) al slug. */
 export const regionDisplayToSlug = (
   display: string,
 ): LiveDemandRegion | undefined => {
   return REGION_DISPLAY_TO_SLUG[display];
 };
-
-// Phase 2 §3.39 — MOCK FALLBACK MOVIDO a `mock-live-demand-card.tsx`.
-//
-// Antes (§3.32): `buildMockLiveDemand()` vivía aquí como fallback
-// automático cuando live + historical fallaban. Eso hacía que
-// producción mostrase datos SINTÉTICOS sin que el usuario lo pidiese
-// explícitamente — violación de la promesa §3.37 ("100% datos reales
-// por defecto").
-//
-// Ahora (§3.39): el mock es un componente separado
-// (`MockLiveDemandCard`) que SOLO se monta en App.tsx cuando
-// `import.meta.env.VITE_ENABLE_MOCK_FALLBACK === 'true'`. La data
-// sintética + DEMO_CURVE viven dentro del componente (no se
-// exportan), reduciendo blast radius: cualquier consumer futuro del
-// hook sólo ve datos reales.
-//
-// Si tanto `useLiveDemand` como `useHistoricalHourly` fallan, el
-// `LiveDemandCard` ahora renderiza un estado de error explícito
-// (chip "ERROR" + mensaje "Sin curva horaria disponible") en vez
-// de fabricar números.

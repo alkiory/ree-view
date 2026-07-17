@@ -13,8 +13,6 @@ export class EnergyBalanceResolver {
 
   @Query(() => [EnergyBalanceType])
   async getEnergyBalances(@Args('input') rawInput: EnergyBalanceInput) {
-    // Salvaguarda: la ValidationPipe global no es 100% confiable con
-    // `autoSchemaFile` en NestJS GraphQL 13. Forzamos validación manual.
     const input = plainToInstance(EnergyBalanceInput, rawInput);
     const errors = await validate(input, { whitelist: true });
     if (errors.length > 0) {

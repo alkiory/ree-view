@@ -1,12 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Vitest spec para `resolveMixColor` (Phase 2 §3.30).
-//
-// Cubre:
-//   • happy paths in-bounds para ambas familias
-//   • consistencia contra todos los items de RENEWABLE_MIX / NON_RENEWABLE_MIX
-//   • fallbacks runtime-safe: NaN / float / negative / out-of-bounds
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { describe, expect, it } from "vitest";
 import {
   C,
@@ -80,17 +71,7 @@ describe("resolveMixColor", () => {
     });
   });
 
-  describe("palette integrity — dual-coding lockdown", () => {
-    // ⚠ NOTE: este describe block lockea las CSS vars que el palette
-    // resuelve. Phase 3 palette rebalance (legítimo) DEBE actualizar TANTO
-    // `frontend/src/index.css` (los dos bloques theme) COMO este spec en el
-    // mismo commit. Si renuevan los hex en index.css sin tocar este spec,
-    // los tests rompen por contrato, no por bug.
-    //
-    // §3.44 update: los tokens ya no son hex literales — son referencias
-    // `var(--c-X)` resueltas por el browser según `data-theme`. Las vars
-    // concretas viven en `index.css` `:root` (dark) y `:root[data-theme="light"]`
-    // (light override).
+  describe("palette integrity", () => {
     it("renewableAlt[0..3] reference correct CSS variables (theme-resolved)", () => {
       expect(C.renewableAlt[0]).toBe("var(--c-renewable)");
       expect(C.renewableAlt[1]).toBe("var(--c-non-renewable-dim)");
@@ -106,8 +87,6 @@ describe("resolveMixColor", () => {
     });
 
     it("MIX items stay consistent with palette indices (no drift)", () => {
-      // Mix[0..3] deben mapear 1:1 a palette[0..3] en orden. Si alguien
-      // edita una paleta sin ajustar MIX[i].colorIndex, este test rompe.
       RENEWABLE_MIX.forEach((item, i) => {
         expect(C.renewableAlt[i]).toBe(
           resolveMixColor("renewable", item.colorIndex),

@@ -10,8 +10,19 @@ interface UseFronteraDataResult {
   refetchFrontera: (variables?: { input: { startDate: string; endDate: string } }) => Promise<any>;
 }
 
-const useFronteraData = (startDate: string, endDate: string): UseFronteraDataResult => {
-  const { loading: loadingFrontera, error: errorFrontera, data: fronteraDataResponse, refetch: refetchFrontera } = useQuery<{ getIntercambios: FronteraType[] }, { input: { startDate: string; endDate: string } }>(
+const useFronteraData = (
+  startDate: string,
+  endDate: string,
+): UseFronteraDataResult => {
+  const {
+    loading: loadingFrontera,
+    error: errorFrontera,
+    data: fronteraDataResponse,
+    refetch: refetchFrontera,
+  } = useQuery<
+    { getIntercambios: FronteraType[] },
+    { input: { startDate: string; endDate: string } }
+  >(
     GET_FRONTERAS,
     {
       variables: {
@@ -29,7 +40,7 @@ const useFronteraData = (startDate: string, endDate: string): UseFronteraDataRes
         });
       },
       errorPolicy: 'all',
-    }
+    },
   );
 
   return { loadingFrontera, errorFrontera, fronteraDataResponse, refetchFrontera };

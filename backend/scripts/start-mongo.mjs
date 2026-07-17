@@ -1,11 +1,9 @@
-// Bootstrap:
-// Arranca una instancia de MongoDB en memoria con mongodb-memory-server,
-// imprime la URI con prefijo "URI:" para que se pueda extraer fácilmente
-// desde logs, y mantiene el proceso vivo hasta SIGINT/SIGTERM.
-//
-// Configurable vía:
-//   MONGO_VERSION=7.0.14   (default)
-//   MONGO_DB=energy-balance (default)
+/**
+ * Arranca una instancia de MongoDB en memoria con mongodb-memory-server,
+ * imprime la URI con prefijo "URI:" y mantiene el proceso vivo hasta
+ * SIGINT/SIGTERM. Configurable vía `MONGO_VERSION` (default 7.0.14) y
+ * `MONGO_DB` (default `energy-balance`).
+ */
 import { MongoMemoryServer } from 'mongodb-memory-server';
 
 const mongod = await MongoMemoryServer.create({
@@ -15,7 +13,6 @@ const mongod = await MongoMemoryServer.create({
 
 console.log('URI:' + mongod.getUri());
 
-// Mantener vivo
 process.stdin.resume();
 
 const shutdown = async () => {

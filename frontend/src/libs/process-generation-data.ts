@@ -1,57 +1,10 @@
- 
-// export function processGenerationData(apiData: any[]) {
-//   const renewable: Record<string, { value: number; percentage: number }> = {};
-//   const nonRenewable: Record<string, { value: number; percentage: number }> = {};
-//   let totalRenewable = 0;
-//   let totalNonRenewable = 0;
-
 import { EnergyBalanceType } from "../types/energy-balance.types";
 
-//   apiData.forEach(item => {
-//     const { type, groupId, attributes } = item;
-//     const total = attributes?.total || 0;
-//     const totalPercentage = attributes?.totalPercentage || 0;
-
-//     if (groupId === 'Renovable') {
-//       renewable[type] = { value: total, percentage: totalPercentage };
-//       totalRenewable += total;
-//     } else {
-//       nonRenewable[type] = { value: total, percentage: totalPercentage };
-//       totalNonRenewable += total;
-//     }
-//   });
-
-//   const renewableWithPercentage = Object.entries(renewable).map(([type, data]) => {
-//     const typedData = data as { value: number; percentage: number };
-//     return {
-//       type,
-//       value: typedData.value,
-//       percentage: (typedData.value / totalRenewable) * 100,
-//     };
-//   });
-
-//   const nonRenewableWithPercentage = Object.entries(nonRenewable).map(([type, data]) => {
-//     const typedData = data as { value: number; percentage: number };
-//     return {
-//       type,
-//       value: typedData.value,
-//       percentage: (typedData.value / totalNonRenewable) * 100,
-//     };
-//   });
-
-//   const totalRenewablePercentage = (totalRenewable / (totalRenewable + totalNonRenewable)) * 100;
-//   const totalNonRenewablePercentage = (totalNonRenewable / (totalRenewable + totalNonRenewable)) * 100;
-
-//   return {
-//     renewable: renewableWithPercentage,
-//     nonRenewable: nonRenewableWithPercentage,
-//     totalRenewable,
-//     totalNonRenewable,
-//     totalRenewablePercentage,
-//     totalNonRenewablePercentage,
-//   };
-// }
-
+/**
+ * Procesa balances crudos de la API REE y devuelve un agregado
+ * separado por grupo (renovable / no-renovable) con porcentajes
+ * respecto al total de su familia y al mix completo.
+ */
 export function processGenerationData(energyBalances: EnergyBalanceType[]) {
   const renewable: { [type: string]: { value: number; percentage: number; color?: string | null; icon?: string | null; title?: string | null } } = {};
   const nonRenewable: { [type: string]: { value: number; percentage: number; color?: string | null; icon?: string | null; title?: string | null } } = {};

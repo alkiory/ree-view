@@ -15,7 +15,6 @@ export default function LoadingState({
       data-testid="loading-state"
     >
       <div className="loading-spinner" />
-      {/* Phase 2 §3.30 cleanup: hex literal → C.muted token ref. */}
       <p className="text-[12px]" style={{ color: C.muted }}>
         {message}
       </p>

@@ -3,12 +3,7 @@ import { C } from "../../libs/design-tokens";
 
 interface StorageItem {
   label: string;
-  value: string; // ya formateado, p.ej. '11,657' o '0'
-  // La flag `positive?` se preserva por compatibilidad estructural con
-  // la integración futura (Fase 2 storage calc desde
-  // `fronteraDataResponse.getIntercambios`). Visualmente irrelevante hoy
-  // porque todos los valores usan `C.accentGold` neutral (Phase 2 default:
-  // "drop C.danger" + "use accentGold for items").
+  value: string;
   positive?: boolean;
 }
 
@@ -20,9 +15,6 @@ const STORAGE_ITEMS: readonly StorageItem[] = [
 ];
 
 export default function StorageCard() {
-  // El cálculo real desde `fronteraDataResponse.getIntercambios` queda
-  // pendiente para Fase 2 — actualmente todos los valores muestran 0
-  // con tipografía monoespaciada. La firma visual sigue el Figma ref.
   return (
     <Card data-testid="storage-card">
       <SectionLabel icon={Battery}>Almacenamiento</SectionLabel>

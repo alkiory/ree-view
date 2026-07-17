@@ -3,13 +3,9 @@ import { GqlExecutionContext } from '@nestjs/graphql';
 import { ThrottlerGuard } from '@nestjs/throttler';
 
 /**
- * Adaptador del ThrottlerGuard estándar de Nest para que pueda extraer
- * el `req`/`res` del contexto de Apollo GraphQL.
- *
- * Sin este guard, cuando el APP_GUARD global de ThrottlerGuard se aplica
- * a un resolver GraphQL, `getRequestResponse` recibe el contexto de
- * Apollo (no Express) y devuelve `undefined`, dejando el rate-limit
- * inefectivo.
+ * Adaptador del ThrottlerGuard estándar de Nest para extraer `req`/`res`
+ * del contexto Apollo cuando se aplica como APP_GUARD global a resolvers
+ * GraphQL.
  */
 @Injectable()
 export class GqlThrottlerGuard extends ThrottlerGuard {

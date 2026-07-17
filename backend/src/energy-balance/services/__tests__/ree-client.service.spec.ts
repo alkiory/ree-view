@@ -31,11 +31,9 @@ describe('ReeClientService', () => {
   let service: ReeClientService;
   let httpGet: ReturnType<typeof vi.fn>;
 
-  // FIX B TZ-portability: las fechas se construyen con `new Date(yyyy,
-  // mm, dd, ...)` (LOCAL midnight) en lugar de `.000Z` (UTC midnight).
-  // Antes del fix, `formatDate(end, ...)` usaba `.toISOString()` que
-  // devolvía UTC, así que el test sólo pasaba en runners UTC. Ahora
-  // `formatDate` usa getters locales → el día es estable cross-TZ.
+  // Fechas construidas con `new Date(yyyy, mm, dd, ...)` (LOCAL
+  // midnight) en lugar de `.000Z` (UTC midnight) para que el test
+  // sea estable cross-TZ con `formatDate` (getters locales).
   const start = new Date(2025, 3, 20, 0, 0, 0);
   const end = new Date(2025, 3, 20, 23, 59, 59);
 
@@ -50,14 +48,8 @@ describe('ReeClientService', () => {
   beforeEach(async () => {
     httpGet = vi.fn();
 
-    // Default env para que el constructor guard (ver §A.1) no falle
-    // durante los tests del happy-path. Cada test que necesite el
-    // camino fallido hace `delete process.env....` explícito.
-    // §3.36 — REE_LIVE_API_URL eliminado: la sección live-demand del
-    // frontend se reemplazó por un mock estático que no toca esta API.
     process.env.REE_API_URL = 'http://test.example/energy';
     process.env.REE_FRONTERAS_API_URL = 'http://test.example/fronteras';
-    // §3.37 — LIVE_API_URL restaurado. Sección live-demand re-activada.
     process.env.REE_LIVE_API_URL = 'http://test.example/live';
 
     const moduleRef: TestingModule = await Test.createTestingModule({
@@ -81,7 +73,7 @@ describe('ReeClientService', () => {
     vi.clearAllMocks();
   });
 
-  describe('constructor guard (boot pre-flight, §A.1)', () => {
+  describe('constructor guard (boot pre-flight)', () => {
     it('throws actionable error when REE_API_URL and REE_API_URL_ERROR are missing', async () => {
       delete process.env.REE_API_URL;
       delete process.env.REE_API_URL_ERROR;
@@ -220,11 +212,6 @@ describe('ReeClientService', () => {
     });
 
     it('propagates the original error message in the thrown InternalServerErrorException (fetchData)', async () => {
-      // Lock-in del contrato nuevo (ver §3.14 en agent-memory/CURRENT.md):
-      // la causa real llega al cliente Apollo como parte del mensaje
-      // (no como string genérico). Una sola aserción `toMatchObject`
-      // evita fragilidades con matcher states sucesivos sobre la misma
-      // rejected promise.
       httpGet.mockReturnValue(throwError(() => new Error('ree-flow-down')));
       await expect(service.fetchData({ start, end })).rejects.toMatchObject({
         message: 'Failed to fetch energy data: ree-flow-down',
@@ -301,7 +288,6 @@ describe('ReeClientService', () => {
     });
 
     it('propagates the original error message in the thrown InternalServerErrorException (fetchFronteras)', async () => {
-      // Simétrico al test de fetchData: misma política de messaging.
       httpGet.mockReturnValue(throwError(() => new Error('frontera-down')));
       await expect(
         service.fetchFronteras({ start, end }),
@@ -313,35 +299,7 @@ describe('ReeClientService', () => {
     });
   });
 
-  /**
-   * §3.37 — bloque `describe('fetchHistoricalHourly ...')` ELIMINADO.
-   *
-   * §3.36 eliminó la sección live-demand entera. §3.37 la
-   * RESTAURA pero con un diseño simplificado:
-   *   - El método legacy `fetchHistoricalHourly(date, geoLimit)`
-   *     y sus 3 hermanos (`fetchCurrentDemand`, `fetchDailyDemandCurve`,
-   *     `fetchGenerationMix`) SE REEMPLAZAN por `fetchDemandaTiempoReal`
-   *     (canonical nuevo) + `fetchGenerationMix` (mix renewable,
-   *     endpoint separado).
-   *   - La curva histórica se construye ahora en el SERVICE layer con
-   *     `util/aggregate-hourly.ts:buildDemandCurve`. No hay método
-   *     `fetchHistoricalHourly` en ree-client.
-   *
-   * Los 2 tests nuevos para `fetchDemandaTiempoReal` están al final del
-   * archivo (ver bloque §3.37 — `fetchDemandaTiempoReal`).
-   */
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // §3.37 — `fetchDemandaTiempoReal` (canonical nuevo)
-  // 2 specs: happy path + 400 REE error propagation.
-  // ─────────────────────────────────────────────────────────────────────────
-
-  describe('fetchDemandaTiempoReal (§3.37 canonical)', () => {
-    /**
-     * Helper — genera el array de 288 values 5-min esperado por la API
-     * REE real. Cada hour-h tiene value=`byHour[h]`. Replicamos el
-     * shape del probe 2026-07-17 (`/tmp/probe-demanda-tiempo-real.json`).
-     */
+  describe('fetchDemandaTiempoReal', () => {
     const makeRealisticIncluded = () => ({
       data: { type: 'Demanda', id: 'dem15' },
       included: [
@@ -379,17 +337,14 @@ describe('ReeClientService', () => {
 
       const items = await service.fetchDemandaTiempoReal(undefined);
 
-      // REE llamado 1 vez con URL composta base+pathSuffix+params.
       expect(httpGet).toHaveBeenCalledTimes(1);
       const [calledUrl, calledConfig] = httpGet.mock.calls[0];
       expect(calledUrl).toBe('http://test.example/live/demanda/demanda-tiempo-real');
-      // start_date / end_date formato `YYYY-MM-DDTHH:MM` cross-TZ idempotente.
       expect(calledConfig.params.start_date).toMatch(/^\d{4}-\d{2}-\d{2}T00:00$/);
       expect(calledConfig.params.end_date).toMatch(/^\d{4}-\d{2}-\d{2}T23:59$/);
       expect(calledConfig.params.time_trunc).toBe('hour');
       expect(calledConfig.params.cached).toBe('true');
 
-      // Devuelve 2 items (Real + Prevista) con 288 values cada uno.
       expect(items).toHaveLength(2);
       expect(items[0].type).toBe('Real');
       expect(items[0].values).toHaveLength(288);
@@ -458,8 +413,6 @@ describe('ReeClientService', () => {
         service.fetchDemandaTiempoReal(undefined),
       ).rejects.toBeInstanceOf(InternalServerErrorException);
 
-      // El mensaje propaga `detail` verbatim (no "Failed to fetch live data: ..."
-      // genérico — mantiene la accionabilidad de §3.14).
       await expect(
         service.fetchDemandaTiempoReal(undefined),
       ).rejects.toMatchObject({
@@ -471,10 +424,6 @@ describe('ReeClientService', () => {
     });
 
     it('throws InternalServerErrorException when response.data has no "included" (HTML 500 invalid slug)', async () => {
-      // REE devuelve 200 + HTML cuando el slug no es válido (Symfony
-      // 500 page) — el `response.data.included` es undefined y nuestro
-      // extractor lo marca como error. Discriminamos el path de catch:
-      // "Invalid live API response for ... missing 'included' field".
       httpGet.mockReturnValue(of(createAxiosResponse({ data: 'html' })));
 
       await expect(

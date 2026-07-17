@@ -3,9 +3,6 @@ import {
   C,
   COUNTRY_CODES,
   COUNTRY_COLORS,
-  // FALLBACK_* se usan inline en el map (lookup ?? fallback) para
-  // países que la API devuelva sin catalogar (no throw — sólo pierde
-  // estética, no rompe la card).
   FALLBACK_COUNTRY_CODE,
   FALLBACK_COUNTRY_COLOR,
 } from "../../libs/design-tokens";
@@ -24,9 +21,6 @@ export default function ExchangeCard({
     ([key]) => key !== "saldoInternacional",
   );
 
-  // maxAbs es el denominador común para normalizar ambas barras a un
-  // único track horizontal. Math.max(0.1, ...) evita div-by-zero cuando
-  // la API devuelve 0 para todos los países del rango seleccionado.
   const maxAbs = Math.max(
     0.1,
     ...entries.flatMap(([, v]) => [Math.abs(v.import), Math.abs(v.export)]),
@@ -44,9 +38,6 @@ export default function ExchangeCard({
           </p>
         ) : (
           entries.map(([country, data]) => {
-            // Lookup libre accent per país (color del chip + track).
-            // Fallback a muted cuando la API devuelve un país no catalogado
-            // (no throw — sólo pierde aesthetic, no rompe la card).
             const code = COUNTRY_CODES[country] ?? FALLBACK_COUNTRY_CODE;
             const color = COUNTRY_COLORS[country] ?? FALLBACK_COUNTRY_COLOR;
             const impW = (data.import / maxAbs) * 100;
@@ -57,8 +48,6 @@ export default function ExchangeCard({
                 className="flex items-center gap-3"
                 data-testid={`exchange-row-${code}`}
               >
-                {/* ISO 2-letter chip (Phase 2 default #3) — reemplaza al
-                    emoji flag. 26x18px, accent22 bg + accent text. */}
                 <span
                   className="w-[26px] h-[18px] rounded-[4px] flex items-center justify-center text-[9px] font-bold shrink-0"
                   style={{ background: `${color}22`, color }}
@@ -67,16 +56,12 @@ export default function ExchangeCard({
                 >
                   {code}
                 </span>
-                {/* Country name — ancho fijo 90px como el Figma ref. */}
                 <span
                   className="w-[90px] text-[12.5px] shrink-0"
                   style={{ color: C.text }}
                 >
                   {country}
                 </span>
-                {/* Single track horizontal, dos segmentos stacked:
-                    import (opacity 0.55) + export (full opacity).
-                    No central axis — el patrón del kit apila los dos. */}
                 <div
                   className="flex-1 h-2.5 rounded-full overflow-hidden flex"
                   style={{ background: C.surfaceAlt }}
@@ -96,7 +81,6 @@ export default function ExchangeCard({
                     aria-label="Exportación"
                   />
                 </div>
-                {/* Valores MWh */}
                 <span
                   className="w-[120px] text-right text-[11px]"
                   style={{

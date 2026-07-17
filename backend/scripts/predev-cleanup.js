@@ -1,24 +1,11 @@
 #!/usr/bin/env node
 /* eslint-disable no-console */
 /**
- * predev-cleanup.js
+ * Hook automático ejecutado ANTES de `dev` (`nest start --watch`).
+ * Libera `:3000` de procesos locales huérfanos de intentos previos.
  *
- * Lifecycle hook that npm/pnpm ejecuta automáticamente ANTES de `dev`
- * (= `nest start --watch`). Libera :3000 de procesos locales huérfanos
- * que dejaron Ctrl+C, crashes, killed -9, etc., de un intento anterior.
- *
- * Reglas:
- *  • Solo mata procesos locales cuyo `comm` indique node / nest CLI.
- *  • NO toca docker (comm distinto). Si lo tiene docker, loggea
- *    instrucción manual (`docker-compose stop backend`) y deja seguir.
- *  • Funciona en Linux (`ss -ltnp`) y cae a `lsof -ti` en macOS/BSD.
- *  • Sale SIEMPRE con 0 (idempotente), aunque no haya nada que matar.
- *
- * Por qué un hook automático:
- *   El típico error EADDRINUSE que dejamos en este proyecto (cuando
- *   `pnpm dev` se ejecuta y el backend de docker ya tiene :3000, o
- *   cuando un `npm run start:dev` previo quedó zombie) lo captura este
- *   script antes de que NestJS intente `app.listen(3000)`.
+ * Reglas: solo mata procesos locales node/nest. NO toca Docker. Funciona
+ * en Linux (`ss`) y cae a `lsof` en macOS/BSD.
  */
 
 const { execSync } = require('child_process');
@@ -28,7 +15,6 @@ const GRACE_MS = 800;
 
 function listPidsOnPort(port) {
   try {
-    // Intento 1: ss (Linux). `\\b` evita matchear :30000 etc.
     const ssOut = execSync(
       `ss -ltnp 2>/dev/null | grep -E ':${port}\\b' || true`,
       { encoding: 'utf8' },
@@ -37,7 +23,6 @@ function listPidsOnPort(port) {
     for (const m of ssOut.matchAll(/pid=(\d+)/g)) pids.add(m[1]);
     if (pids.size > 0) return Array.from(pids);
 
-    // Intento 2: lsof (macOS, BSD, contenedor sin ss).
     const lsofOut = execSync(`lsof -ti :${port} 2>/dev/null || true`, {
       encoding: 'utf8',
     });
@@ -88,11 +73,11 @@ function killWithGrace(pid) {
   console.log(`[predev] sent SIGTERM to pid=${pid}; grace ${GRACE_MS}ms`);
   setTimeout(() => {
     try {
-      process.kill(pid, 0); // probe
+      process.kill(pid, 0);
       safeKill(pid, 'SIGKILL');
       console.log(`[predev] escalated to SIGKILL for pid=${pid}`);
     } catch {
-      /* ya murió, OK */
+      // ya murió
     }
   }, GRACE_MS);
   return true;

@@ -42,10 +42,6 @@ export class EnergyBalance extends Document {
 
 export const EnergyBalanceSchema = SchemaFactory.createForClass(EnergyBalance);
 
-// TTL de 24h sobre el campo `createdAt` (autogenerado por `timestamps: true`).
-// MongoDB purgará automáticamente los documentos cacheados un día después de
-// su inserción, manteniendo fresca la caché contra la API de REE sin
-// necesidad de jobs cron. Ajustable vía `CACHE_TTL_SECONDS` (default 86400).
 const CACHE_TTL_SECONDS = Number(process.env.CACHE_TTL_SECONDS) || 86_400;
 EnergyBalanceSchema.index(
   { createdAt: 1 },

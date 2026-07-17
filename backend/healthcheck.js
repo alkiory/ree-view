@@ -1,14 +1,10 @@
-// Healthcheck ligero para el HEALTHCHECK de Docker.
-// Usa fetch nativo de Node 18+; lanza una query GraphQL barata ({__typename})
-// y exit 0/1 según el código de respuesta.
-//
-// Importante: este archivo NO se compila (nest build lo excluye porque está
-// fuera de src/), se copia al contenedor tal cual y Docker lo invoca vía shell.
-// IMPORTANTE: este archivo se ejecuta con `node healthcheck.js` desde
-// el Dockerfile (CommonJS por defecto, sin flag --experimental-vm-modules).
-// Top-level await NO funciona en CJS, así que todo va dentro de una
-// IIFE async. Si en el futuro el backend pasa a ESM (package.json
-// "type":"module"), se puede convertir a top-level await.
+/**
+ * Healthcheck ligero para el HEALTHCHECK de Docker. Lanza una query
+ * GraphQL barata (`{__typename}`) y exit 0/1 según la respuesta.
+ *
+ * NOTA: este archivo NO se compila (fuera de `src/`), se copia al
+ * contenedor y Docker lo invoca directamente (CommonJS, no ESM).
+ */
 (async () => {
   try {
     const response = await fetch('http://localhost:3000/graphql', {

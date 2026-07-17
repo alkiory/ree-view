@@ -10,7 +10,7 @@ import { ReeClientService } from './ree-client.service';
 
 @Injectable()
 export class EnergyBalanceService {
-  private readonly logger = new Logger(ReeClientService.name);
+  private readonly logger = new Logger(EnergyBalanceService.name);
   constructor(
     @InjectModel(EnergyBalance.name)
     private readonly balanceModel: Model<EnergyBalance>,
@@ -59,22 +59,11 @@ export class EnergyBalanceService {
     type?: string;
     groupType?: string;
   }) {
-    this.logger.log(
-      `[1] Received params: \n startData:${startDate} endDate:${endDate}`,
-    );
-
     const start = new Date(`${startDate}T00:00:00Z`);
     const end = new Date(`${endDate}T23:59:59Z`);
 
-    this.logger.log(
-      `[2] Converted to Date: \n startData:${start} endDate:${end}`,
-    );
-
     await this.fetchMissingData({ start, end });
 
-    // Build the Mongo query once, declaratively, including every supported filter.
-    // NOTE: `groupType` lives inside the embedded `attributes` object on the
-    // schema, not at the top level, so we use dot-notation here.
     const query: FilterQuery<EnergyBalance> = {
       startDate: { $gte: start },
       endDate: { $lte: end },
@@ -83,11 +72,7 @@ export class EnergyBalanceService {
       ...(groupType && { 'attributes.groupType': groupType }),
     };
 
-    this.logger.log(`[3] Query MongoDB: ${JSON.stringify(query)}`);
-
     const data = await this.balanceModel.find(query).exec();
-    this.logger.log(`[4] Data obtained from MongoDB: ${data.length}`);
-
     return data;
   }
 }

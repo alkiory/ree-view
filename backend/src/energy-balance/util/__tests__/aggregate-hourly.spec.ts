@@ -9,16 +9,16 @@ import {
 } from '../aggregate-hourly';
 
 /**
- * Generador de N ticks 5-min a partir de un ISO base. Cada tick
- * avanza 5 minutos; el valor se construye como 1000 + i*10 (monótono
- * ascendente para detectar claramente errors de orden o de bucketing).
+ * Generador de N ticks 5-min a partir de un ISO base.
+ * El valor se construye como 1000 + i*10 (monótono ascendente) para
+ * detectar claramente errors de orden o de bucketing.
  */
 function make5minValues(
   baseIso: string = '2026-07-14T00:00:00.000+02:00',
   count: number = EXPECTED_TICKS_PER_DAY,
 ): { value: number; datetime: string }[] {
-  // TZ-safe string-based ISO parser. NO `new Date()` — Date converts
-  // to runner TZ, rompiendo el contrato cross-TZ (cf. §3.33 Fix B).
+  // TZ-safe string-based ISO parser. NO `new Date()` — Date convierte
+  // a la TZ del runner, rompiendo el contrato cross-TZ.
   const m = baseIso.match(
     /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):\d{2}\.\d{3}(Z|[+-]\d{2}:\d{2})$/,
   );
@@ -45,7 +45,7 @@ function make5minValues(
   return out;
 }
 
-describe('aggregateHourly (§3.37 pure function)', () => {
+describe('aggregateHourly (pure function)', () => {
   it('aggregates exactly 288 5-min ticks into 24 hour marks [00h..23h]', () => {
     const ticks = make5minValues();
     expect(ticks.length).toBe(EXPECTED_TICKS_PER_DAY);
@@ -69,13 +69,9 @@ describe('aggregateHourly (§3.37 pure function)', () => {
     expect(hourly[23].datetime.startsWith('2026-07-14T23:00')).toBe(true);
   });
 
-  it('rejects counts that are zero or not positive multiples of TICKS_PER_HOUR (§3.43 partial-day semantics)', () => {
-    // §3.43 — Antes (§3.37): cualquier count != 288 lanzaba throw con
-    // "expected 288 5-min entries". Ahora: count=0 ó count%12!==0
-    // lanzan throw explicando el partial-hour-bucket constraint.
-    // Preserva fail-loud §3.21 sin descartar datasets parciales de
-    // madrugada (count=12, 24, 144 → válidos, cubiertos en el bloque
-    // `aggregateHourly count-flexible (§3.43 partial-day)` abajo).
+  it('rejects counts that are zero or not positive multiples of TICKS_PER_HOUR (partial-day semantics)', () => {
+    // Preserva fail-loud sin descartar datasets parciales (count=12,
+    // 24, 144 → válidos, cubiertos en el bloque count-flexible abajo).
     const notMul287 = make5minValues('2026-07-14T00:00:00.000+02:00', 287);
     expect(() => aggregateHourly(notMul287)).toThrow(
       /count must be a positive multiple of 12.*got 287/i,
@@ -115,7 +111,7 @@ describe('aggregateHourly (§3.37 pure function)', () => {
   });
 });
 
-describe('buildDemandCurve (§3.37 pure function)', () => {
+describe('buildDemandCurve (pure function)', () => {
   it('zips Real + Prevista 24h series into the demandCurve shape', () => {
     const real = make5minValues();
     const prevista = make5minValues();
@@ -193,9 +189,8 @@ describe('aggregateHourly count-flexible (§3.43 partial-day)', () => {
   });
 
   it('accepts 288 ticks → 24 hour buckets (full day, backward compat)', () => {
-    // Cubre el path legacy §3.37 que ya estaba probado antes pero
-    // vale la pena assert explícito aquí: 288 sigue retornando 24
-    // buckets con etiquetas 00h..23h. Lock contra regression.
+    // 288 sigue retornando 24 buckets con etiquetas 00h..23h.
+    // Lock contra regression.
     const ticks = make5minValues('2026-07-14T00:00:00.000+02:00', 288);
     const hourly = aggregateHourly(ticks);
     expect(hourly).toHaveLength(24);
@@ -203,11 +198,9 @@ describe('aggregateHourly count-flexible (§3.43 partial-day)', () => {
     expect(hourly[23].h).toBe('23h');
   });
 
-  it('rejects count=25 (not a multiple of 12) — anti-regression del reject §3.43', () => {
-    // §3.43 — Count=25 proseguido por semántica `n%12===0` queda
-    // explícitamente rechazado. Cubierto también por el bloque
-    // superior `rejects counts…` pero listar explícitamente evita
-    // off-by-one cuando el threshold se tunee a 24 más adelante.
+  it('rejects count=25 (not a multiple of 12) — anti-regression', () => {
+    // Listar explícitamente evita off-by-one cuando el threshold se
+    // tunee a 24 más adelante.
     const ticks = make5minValues('2026-07-14T00:00:00.000+02:00', 25);
     expect(() => aggregateHourly(ticks)).toThrow(
       /count must be a positive multiple of 12.*got 25/i,

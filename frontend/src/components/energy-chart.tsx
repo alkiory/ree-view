@@ -28,22 +28,24 @@ interface DerivedState {
   saldoTotal: number;
 }
 
-// Wrapper de extracción: convierte balances crudos → agregados reusables por
-// las cards inferiores. Se ejecuta una sola vez por render para no repetir
-// trabajo en cada card hijo.
+/**
+ * Convierte balances crudos en agregados reusables por las cards
+ * inferiores. Se ejecuta una sola vez por render para no repetir
+ * trabajo en cada card hijo.
+ */
 function buildDerived(
   balances: EnergyBalanceType[],
   intercambios: FronteraType[],
 ): DerivedState {
   const generationData = processGenerationData(balances);
   const totalGenerationGWh =
-    (generationData.totalRenewable + generationData.totalNonRenewable) / 1000; // MWh → GWh
+    (generationData.totalRenewable + generationData.totalNonRenewable) / 1000;
   const averageDemandGWh =
     balances.length === 0
       ? 0
       : balances.reduce((acc, b) => acc + (b.attributes?.total ?? 0), 0) /
-      balances.length /
-      1000;
+        balances.length /
+        1000;
 
   const internationalExchanges: InternationalExchangesProps['internationalExchanges'] = {};
   let saldoTotal = 0;

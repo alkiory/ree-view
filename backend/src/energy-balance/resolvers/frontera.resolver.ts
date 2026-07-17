@@ -13,8 +13,6 @@ export class FronteraResolver {
 
   @Query(() => [FronteraType])
   async getIntercambios(@Args('input') rawInput: FronteraInput) {
-    // Salvaguarda: validación manual porque la pipe global no es 100%
-    // confiable con autoSchemaFile en NestJS GraphQL 13.
     const input = plainToInstance(FronteraInput, rawInput);
     const errors = await validate(input, { whitelist: true });
     if (errors.length > 0) {

@@ -18,10 +18,6 @@ export default function KpiRow({
   const totalMWh = Math.round(totalGenerationGWh * 1000);
   const avgMWh = Math.round(averageDemandGWh * 1000);
 
-  // Phase 2: cada KPI recebe accent libre de la nueva paleta + sparkline
-  // synthetic. Saldo internacional mantiene semantic conditional (danger
-  // pink cuando exporta más de lo que importa, renewable verde cuando
-  // neto importador) porque el SEMÁNTICO conserva valor informativo.
   return (
     <div className="flex flex-wrap gap-4 mb-6" data-testid="kpi-row">
       <KPI
@@ -63,7 +59,7 @@ export default function KpiRow({
         value="—"
         unit="GWh"
         accent={C.accentGold}
-        sub="Pendiente Fase 2"
+        sub="Próximamente"
         spark={SPARK_SYNTHETIC.storage}
       />
     </div>

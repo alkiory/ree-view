@@ -10,34 +10,11 @@ import { AxiosError } from 'axios';
 @Injectable()
 export class ReeClientService {
   private readonly logger = new Logger(ReeClientService.name);
-  // Inicializadas en el constructor tras validar env (ver Guard §A.1 abajo).
-  // Si los env vars faltan, el servicio falla en boot con un mensaje
-  // accionable en lugar del opaco "Invalid URL" de axios (investigación
-  // bug A — propuesta §2.3 cambio A.1 aprobada por el usuario).
   private readonly API_URL!: string;
   private readonly FRONTERAS_API!: string;
-  /**
-   * §3.37 — restaurado. Base URL de los endpoints live REE
-   * (`demanda/demanda-tiempo-real`, `generacion/estructura-generacion`).
-   * Formato: `${REE_LIVE_API_URL}` — slash final opcional.
-   */
+  /** Base URL de los endpoints live REE. */
   private readonly LIVE_API!: string;
   constructor(private httpService: HttpService) {
-    // Fail-fast guard: detecta env vars faltantes ANTES de que cualquier
-    // fetch corra. Antes de este guard, un dev que olvidaba crear
-    // `backend/.env` arrancaba el servidor (MONGODB_URI tiene fallback
-    // en §3.2 CURRENT.md) pero cada request fallaba con "Invalid URL"
-    // opaco porque `API_URL` quedaba como `undefined` frozen al cierre
-    // de este constructor y axios.get(undefined) ⇒ Error("Invalid URL").
-    // Agrega todas las vars faltantes en un solo mensaje accionable (en
-    // vez de tirar por la primera que falta — el dev debería ver TODAS
-    // las que necesita configurar de una).
-    //
-    // §3.36 — histórico: la var `REE_LIVE_API_URL` ya no es necesaria.
-    // La sección live-demand del frontend (Phase 2 §3.31–§3.35) se
-    // reemplazó por un mock estático (`MockLiveDemandCard`) que no
-    // toca esta API. Por tanto la guard sólo valida las 2 vars que
-    // quedan activas: balance + fronteras.
     const missing: string[] = [];
     const apiUrl = process.env.REE_API_URL || process.env.REE_API_URL_ERROR;
     const fronterasApiUrl =
@@ -112,12 +89,6 @@ export class ReeClientService {
         );
       }
 
-      // Log NO-AxiosError: incluye stack para diagnóstico. REE apiDatos
-      // responde 200 OK incluso en errores lógicos (included ausente,
-      // dataset vacío, fechas futuras), por lo que `instanceof AxiosError`
-      // es `false` y caemos aquí. Propagamos el mensaje original para
-      // que el `onError` de Apollo lo muestre tal cual en consola del
-      // frontend, en lugar del "Failed to fetch energy data" genérico.
       const detail = error?.message || 'non-Axios error in ree-client';
       this.logger.error(
         `REE => Unexpected error: ${detail}`,
@@ -131,17 +102,8 @@ export class ReeClientService {
   }
 
   /**
-   * TZ-independent formatter para `YYYY-MM-DD HH:MM` (sin offset).
-   *
-   * **POR QUÉ getters locales y NO `date.toISOString()`** (Fix B,
-   * §3.33): `date.toISOString()` siempre convierte a UTC, lo que en
-   * servers no-UTC (CEST = UTC+2 en verano) adelantaba el día al
-   * anterior en el payload a REE. Usando `getFullYear/getMonth/getDate`
-   * accedemos al día según el calendario LOCAL del server, idempotente
-   * cross-TZ. `end_date` cierra correctamente a `23:59` del mismo día
-   * local en cualquier TZ.
-   *
-   * Se mantiene aquí porque `fetchData` y `fetchFronteras` la usan.
+   * Formatea un Date a `YYYY-MM-DD HH:MM` usando getters locales (no
+   * UTC), idempotente cross-TZ.
    */
   private formatDate(date: Date, isStart: boolean): string {
     const yyyy = date.getFullYear();
@@ -198,8 +160,6 @@ export class ReeClientService {
         );
       }
 
-      // Simétrico a `fetchData`: propaga el mensaje real del error y deja
-      // el stack en el log para diagnóstico.
       const detail = error?.message || 'non-Axios error in ree-client';
       this.logger.error(
         `Frontera => Unexpected error: ${detail}`,
@@ -213,47 +173,14 @@ export class ReeClientService {
   }
 
   /**
-   * §3.37 — Live-demand methods RESTAURADOS tras investigación real
-   * (ver §2.1 de la propuesta). El endpoint correcto para histórico
-   * horario NO es `demanda/evolucion` (que solo rinde 1 valor/día) sino
-   * `demanda/demanda-tiempo-real`, que devuelve 4 series × 288 ticks
-   * de 5 min (idénticos al sliding-window del live pero disponibles
-   * para CUALQUIER fecha pasada). §3.36 los había eliminado por un
-   * diagnóstico precipitado; ahora se re-introducen como
-   * `fetchDemandaTiempoReal` (canonical) + `fetchGenerationMix`
-   * (mix renewable, endpoint separado).
-   */
-
-  /**
-   * §3.37 — Wrapper privado para todos los endpoints live REE.
-   *
-   *   - URL: `${this.LIVE_API}/${pathSuffix}` (la LIVE_API se
-   *     configuró sin slash final; lo añadimos aquí si falta).
-   *   - Params default: `start_date=todayLocal00:00`, `end_date=
-   *     todayLocal23:59`, `time_trunc=hour`, `cached=true`. El caller
-   *     puede overridear `geo_limit` etc. con `params` extra.
-   *   - Discriminación de error:
-   *       - JSON `{errors: [...]}` → API válida con data lag → `detail`
-   *         propagado como InternalServerErrorException con `cause`.
-   *       - HTML Symfony 500 → slug inválido (config bug) → mismo
-   *         throw con `description` específica.
-   *       - Non-Axios (network/DNS) → log con stack + throw con
-   *         mensaje verbatim (`Failed to fetch live data: …`).
-   *
-   * TZ handling: `liveStartDate()`/`liveEndDate()` usan los getters
-   * LOCALES (getFullYear/getMonth/getDate) — NO `toISOString()` que
-   * convierte a UTC y adelanta el día al anterior en servidores CEST
-   * (cf. §3.33 fix B). El formato YYYY-MM-DDTHH:MM es lo que REE
-   * parsea consistentemente.
+   * Wrapper privado para endpoints live REE. Estima el rango default a
+   * hoy (00:00–23:59 local) y permite override vía `opts.date`.
    */
   private async callLiveEndpoint<R>(
     pathSuffix: string,
     extract: (data: any) => R,
     opts: { date?: Date; extraParams?: Record<string, string> } = {},
   ): Promise<R> {
-    // §3.37 — el `date` opcional permite a callers pedir un historical
-    // rango concreto (ej. ayer para `getHistoricalHourlySnapshot`).
-    // Si se omite, usamos hoy (live snapshot path).
     const start_date = opts.date
       ? this.toLocalISO(opts.date, '00:00')
       : this.liveStartDate();
@@ -306,23 +233,21 @@ export class ReeClientService {
     }
   }
 
-  /** TZ-independent formatter para `YYYY-MM-DDTHH:MM` (start = 00:00 local). */
+  /** Devuelve `YYYY-MM-DDTHH:MM` (start = 00:00 local) para hoy. */
   private liveStartDate(): string {
     const d = new Date();
     return this.toLocalISO(d, '00:00');
   }
 
-  /** TZ-independent formatter para `YYYY-MM-DDTHH:MM` (end = 23:59 local). */
+  /** Devuelve `YYYY-MM-DDTHH:MM` (end = 23:59 local) para hoy. */
   private liveEndDate(): string {
     const d = new Date();
     return this.toLocalISO(d, '23:59');
   }
 
   /**
-   * TZ-independent formatter para `YYYY-MM-DDTHH:MM`. Usa getters
-   * LOCALES (`getFullYear/getMonth/getDate/getHours/getMinutes`) — no
-   * `toISOString()` que siempre opera en UTC. Cross-TZ idempotente
-   * (cf. Fix B §3.33).
+   * Formatea `YYYY-MM-DDTHH:MM` con getters locales (no `toISOString`,
+   * que siempre opera en UTC).
    */
   private toLocalISO(d: Date, hhmm: string): string {
     const yyyy = d.getFullYear();
@@ -332,27 +257,9 @@ export class ReeClientService {
   }
 
   /**
-   * §3.37 — `fetchDemandaTiempoReal` (canonical, nuevo nombre).
-   *
-   * Llama al endpoint REE `demanda/demanda-tiempo-real` que devuelve,
-   * para una fecha (today por default, o cualquier histórica via
-   * `getSnapshot`/`getHistoricalHourlySnapshot` que ajusten
-   * manualmente `liveStartDate`/`liveEndDate` — ver TODO §6 si se
-   * generaliza), 4 series con granularidad 5-min:
-   *
-   *   - Real (id=2037)          → la curva "real" del frontend
-   *   - Prevista (id=2052)      → la curva "forecast" del frontend
-   *   - Programada              → no usado por el dashboard (kept raw)
-   *   - Programada total        → no usado por el dashboard (kept raw)
-   *
-   * Devuelve los items parseados como `{ type, values[] }` para que el
-   * aggregator (`util/aggregate-hourly.ts:buildDemandCurve`) pueda
-   * extraer el shape `demandCurve` del `LiveDemandSnapshot` sin
-   * conocer el shape raw de REE.
-   *
-   *   `geoLimit`: kebab-case opcional ('peninsular' | 'baleares' |
-   *   'canarias' | 'ceuta' | 'melilla') para sub-regiones. `undefined`
-   *   o `null` → omite el param → REE devuelve el agregado nacional.
+   * Llama a `demanda/demanda-tiempo-real` para una fecha (hoy o
+   * histórica). Devuelve las 4 series con granularidad 5-min
+   * (`Real`, `Prevista`, `Programada`, `Programada total`).
    */
   async fetchDemandaTiempoReal(
     geoLimit?: string | null,
@@ -380,15 +287,8 @@ export class ReeClientService {
   }
 
   /**
-   * §3.37 — `fetchGenerationMix` (restaurado de §3.32).
-   *
-   * Endpoint separado `generacion/estructura-generacion`. NO usa
-   * `demanda-tiempo-real` porque esa solo reporta totales — el mix
-   * renewable/no-renewable vive en una indicator distinta.
-   *
-   * Devuelve `{ renewablePercentageValue: number }` (0..100). En el
-   * historical path (ayer) este endpoint devuelve la misma estructura
-   * pero con data del día anterior — propagamos tal cual al snapshot.
+   * Llama a `generacion/estructura-generacion` para obtener el mix
+   * renewable/no-renewable como porcentaje (0..100).
    */
   async fetchGenerationMix(
     geoLimit?: string | null,
@@ -398,13 +298,6 @@ export class ReeClientService {
     return this.callLiveEndpoint(
       'generacion/estructura-generacion',
       (data: any) => {
-        // §3.37 — categorías renewable canónicas REE (alineado con
-        // §3.29/§3.30 design tokens `RENEWABLE_MIX` + redondeo por
-        // nombres que apidatos.ree.es publica en `estructura-generacion`
-        // para data del sistema peninsular español).
-        //
-        // Lista cerrada (no fuzzy match por `includes('renov')` que
-        // sería frágil — code-reviewer §3.37 flagged).
         const RENEWABLE_CATEGORIES: ReadonlySet<string> = new Set([
           'Hidráulica',
           'Eólica',

@@ -1,7 +1,3 @@
-// Inspecciona los índices de las colecciones energybalances y fronteras
-// para confirmar que el TTL (expireAfterSeconds) está activo.
-//
-// Uso: node inspect-indexes.mjs <mongodb-uri>
 import { MongoClient } from 'mongodb';
 
 const uri = process.argv[2];
@@ -11,7 +7,6 @@ if (!uri) {
 }
 
 const client = new MongoClient(uri, {
-  // Evita que la conexión quede colgada si Mongo no responde
   serverSelectionTimeoutMS: 5_000,
 });
 await client.connect();

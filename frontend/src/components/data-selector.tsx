@@ -3,22 +3,14 @@ import DatePicker from 'react-datepicker';
 import 'react-datepicker/dist/react-datepicker.css';
 import { C } from '../libs/design-tokens';
 
-// Tipos canónicos de groupId; deben coincidir con lo que devuelve la API
-// de REE y con lo que mapea processGenerationData en el frontend.
+/** Tipos canónicos de groupId; deben coincidir con la API de REE. */
 export type EnergyGroupId = 'Renovable' | 'No-Renovable';
 
-// Mapped types con `readonly [K in T]: V` triggerean un quirk en el parser
-// de SWC (usado por @vitejs/plugin-react-swc) — `Expected ']', got 'in'`.
-// Forma explícita, estructuralmente equivalente y 100% compatible con
-// tsc + swc + babel.
 interface EnergyTypes {
   Renovable: Array<{ id: string; name: string }>;
   'No-Renovable': Array<{ id: string; name: string }>;
 }
 
-// El `id` aquí debe ser el `groupId` canónico que devuelve la API de REE
-// y se persiste en MongoDB. El tipo `EnergyGroupId` se exporta para
-// reutilizarlo en otros componentes que comparen strings.
 const energyGroups: ReadonlyArray<{ id: EnergyGroupId; name: string }> = [
   { id: 'Renovable', name: 'Renovable' },
   { id: 'No-Renovable', name: 'No renovable' },
@@ -53,22 +45,18 @@ export default function DataSelector({
 }: DataSelectorProps) {
   const [startDate, setStartDate] = useState<Date>(new Date());
   const [endDate, setEndDate] = useState<Date>(new Date());
-  // Estado como `string` porque los elementos <select> siempre emiten string.
-  // El narrowing a `EnergyGroupId | ''` se hace en handleApply con guard.
   const [selectedGroup, setSelectedGroup] = useState<string>('');
   const [selectedType, setSelectedType] = useState<string>('');
 
   const handleGroupChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedGroup(e.target.value);
-    setSelectedType(''); // Reset the type when the group changes
+    setSelectedType('');
   };
 
   const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setSelectedType(e.target.value);
   };
 
-  // Guard: confirma que el string del select es uno de los IDs canónicos
-  // antes de estrechar a `EnergyGroupId`. Devuelve `null` para el valor "".
   const toGroupIdOrNull = (value: string): EnergyGroupId | null => {
     if (value === 'Renovable' || value === 'No-Renovable') return value;
     return null;
@@ -83,7 +71,6 @@ export default function DataSelector({
     onTypeChange(selectedType === '' ? null : selectedType);
   };
 
-  // ── VISUAL ÚNICAMENTE. Lógica / mapping / narrowing preservados ─────────────
   return (
     <div
       className="rounded-2xl border p-5 mb-6"

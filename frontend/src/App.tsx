@@ -6,13 +6,6 @@ import MockLiveDemandCard from "./components/cards/mock-live-demand-card";
 import { formatDate } from "./libs/date-formatter";
 import { C } from "./libs/design-tokens";
 
-// Phase 2 §3.39 — opt-in mock fallback para dev offline / sandbox.
-// Default: `false` (prod-safe). Se activa con `VITE_ENABLE_MOCK_FALLBACK=true`
-// en `.env.local` o al hacer `pnpm dev` con esa variable.
-//
-// Vite hace static-replace de `import.meta.env.*` en build-time:
-// cuando la flag es `false`/unset, el branch de MockLiveDemandCard
-// se elimina completamente del bundle (dead-code elimination).
 const USE_MOCK_FALLBACK =
   import.meta.env.VITE_ENABLE_MOCK_FALLBACK === "true";
 
@@ -51,11 +44,6 @@ export default function App() {
           type={filters.type}
           groupId={filters.groupId}
         />
-        {/* Phase 2 §3.39 — LiveDemandCard top-level.
-            Antes vivía dentro de EnergyChart (buried under the energy
-            flow). Lo movemos aquí porque (a) la data live no depende
-            de los date filters del DataSelector, (b) así el branch
-            Mock/Live queda en un solo lugar visible para review. */}
         {USE_MOCK_FALLBACK ? <MockLiveDemandCard /> : <LiveDemandCard />}
       </div>
       <footer
