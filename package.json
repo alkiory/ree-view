@@ -1,1 +1,13 @@
-{"dependencies":{"@apollo/server":"^4.13.0"}}
+{
+  "name": "ree-view",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@apollo/server": "^4.13.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@apollo/protobufjs"
+    ]
+  }
+}
