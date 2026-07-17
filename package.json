@@ -5,9 +5,7 @@
   "dependencies": {
     "@apollo/server": "^4.13.0"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@apollo/protobufjs"
-    ]
-  }
+  "onlyBuiltDependencies": [
+    "@apollo/protobufjs"
+  ]
 }
