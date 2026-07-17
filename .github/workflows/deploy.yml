@@ -34,6 +34,12 @@ jobs:
 
       - name: Build Frontend
         run: pnpm --filter frontend build
+        env:
+          # GitHub Pages sirve el proyecto bajo /ree-view/ (project page).
+          # Sin esta env var, Vite genera <script src="/assets/..."> que el
+          # browser resuelve a https://alkiory.github.io/assets/... → 404 → pantalla blanca.
+          # Vite la traduce en dist/index.html a /ree-view/assets/... correcto.
+          VITE_BASE_URL: /ree-view/
 
       - uses: actions/configure-pages@v5
 
