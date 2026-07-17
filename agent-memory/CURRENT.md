@@ -1436,9 +1436,19 @@ const fullyDegraded =
   Array.isArray(snap.demandCurve) &&
   snap.demandCurve.length === 0;
 
-// Después (§3.42): OR de §3.27 fully-degraded + §3.42 partial-degraded
+// §3.42 inicial: OR de §3.27 fully-degraded + §3.42 partial-degraded.
+// §3.42.1 madrugada fix post-§3.43: threshold ajustado a `=== 0`
+// en lugar de `< 2`. Motivo: aggregateHourly post-§3.43 rinde curvas
+// legítimas de 1 bucket cuando REE completa la primera hora del día
+// (~00:00-01:00 local). El umbral `< 2` cazaba esos casos como
+// "degraded" → fallback histórico innecesario. Como el único path
+// hacia partial-degraded es el catch del `service.ts`
+// (`buildDemandCurve` lanza throw → `curve = []`), `=== 0` es
+// estrictamente equivalente a `< 2` para el degraded case y no
+// genera false-positives para curvas cortas pero válidas. CONCERN
+// #1 fix aplicado en este turn.
 const partialDegraded =
-  Array.isArray(snap.demandCurve) && snap.demandCurve.length < 2;
+  Array.isArray(snap.demandCurve) && snap.demandCurve.length === 0;
 return partialDegraded || fullyDegraded;
 ```
 

@@ -25,26 +25,29 @@ export class LiveDemand extends Document {
   curve: { h: string; real: number; prevista: number }[];
 
   /**
-   * Phase 2 §3.31 — region-keyed cache.
+   * §3.31 — region-keyed cache. §3.27/§3.28 inicial guardaban UN solo
+   * doc (sobreescribiendo). Ahora con region picker, cada `(region)`
+   * tiene su propio slot. TTL es el mismo (60s) → max 6 docs activos
+   * en cualquier momento.
    *
-   * Phase 2 §3.27/§3.28 inicial guardaban UN solo doc (sobreescribiendo).
-   * Ahora con region picker, cada `(region)` tiene su propio slot. TTL es
-   * el mismo (60s) → max 6 docs activos en cualquier momento.
+   * §3.41 — `default` ahora es el **enum value** 'NACIONAL' (no el
+   * Display 'Nacional'). Razón: `regionCacheKey` retorna enum value
+   * (ver `live-demand.service.ts:regionCacheKey` docstring §3.41), por
+   * lo que `findOne({region: cacheKey})` busca bajo 'NACIONAL'. Para
+   * que el upsert default también use 'NACIONAL' (consistencia entre
+   * el cache lookup key y el upsert key en caso de Mongoose defaults
+   * fire), el default del schema debe coincidir.
    *
-   * Default 'Nacional' (slug absent) para backward-compat con docs
-   * pre-§3.31 que se insertaron sin region. El composite index abajo
-   * cubre queries cacheadas per-region + TTL scan.
+   * El composite index abajo cubre queries cacheadas per-region + TTL
+   * scan.
    *
-   * NOTA: si la collection ya tiene datos sin `region`, Mongo ODM aplica
-   * default retroactivo sólo al insert/save — los docs existentes quedan
-   * con field undefined. La service layer trata `region === null` como
-   * 'Nacional' lo cual sigue funcionando porque el lookup
-   * `findOne({region: 'Nacional'})` no matchea docs preexistentes con
-   * `region: undefined`. La doc-cleanup (Mongoose @Schema sin
-   * graceful migration per project convention — "no migration, brief
-   * downtime OK") cae en schematic re-creation al deploy siguiente.
+   * NOTA migración: si la collection ya tiene docs pre-§3.31 con
+   * `region: 'Nacional'` (kebab-Display), el lookup
+   * `findOne({region: 'NACIONAL'})` no los matchea. La service layer
+   * trata `region === undefined` como 'NACIONAL' (cache miss → re-fetch).
+   * TTL natural (60s) limpia los docs viejos sin necesidad de backfill.
    */
-  @Prop({ type: String, required: true, default: 'Nacional' })
+  @Prop({ type: String, required: true, default: 'NACIONAL' })
   region: string;
 }
 

@@ -16,7 +16,6 @@ import {
   yesterdayISODate,
   isDegradedSnapshot,
   regionDisplayToSlug,
-  buildMockLiveDemand,
   type LiveDemandRegion,
 } from "../../hooks/useLiveDemand";
 import { extractErrorDetail } from "../../libs/extract-error-detail";
@@ -57,11 +56,22 @@ function CurrentTime({ source }: { source: string | null | undefined }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase 2 §3.32 — DISCARDED CHIPS for mode awareness.
+// Phase 2 §3.39 — DISCARDED CHIPS for mode awareness.
 //   - 'loading'     → CARGANDO (muted pulse) — Apollo initial fetch en vuelo
 //   - 'live'        → EN VIVO (cyan, pulsing dot)
-//   - 'historical'  → HISTÓRICO (muted, bordered)
-//   - 'mock'        → DEMO (gold, boxed) — datos sintéticos, NO reales
+//   - 'historical'  → HISTÓRICO (muted, bordered) — incluye el caso
+//                     «live degradado + historical unavailable» que
+//                     §3.32 etiquetaba 'mock'. Ahora se renderiza
+//                     como 'historical' con `renderedSnap=undefined`
+//                     → chart muestra «Sin curva horaria disponible».
+//                     Production NUNCA enseña datos sintéticos.
+//
+// Phase 2 §3.32 — el chip DEMO vivía aquí. MOVIDO a
+// `mock-live-demand-card.tsx` (§3.39) y gateado tras
+// `VITE_ENABLE_MOCK_FALLBACK=true`. Por eliminación, Mode ahora tiene
+// 3 valores; el Record<Mode, …> exhaustivo abajo compila-time
+// garantiza que cualquier futuro Mode value añadido al union requiera
+// actualizar los 3 records (CAPTION/COLOR/GRADIENT_ID) en bloque.
 // ─────────────────────────────────────────────────────────────────────────────
 function Chip({ mode }: { mode: Mode }) {
   if (mode === "loading") {
@@ -119,65 +129,76 @@ function Chip({ mode }: { mode: Mode }) {
       </span>
     );
   }
-  // mode === 'mock'
+  // Phase 2 §3.39 — removed 'mock' mode. Si llegamos aquí con un
+  // Mode value inesperado, devolvemos el chip de loading como
+  // fallback defensivo (TS exhaustiveness check arriba cubre los 3
+  // cases reales; este branch es sólo para Mode == undefined).
   return (
     <span
       className="relative flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10.5px] font-semibold border"
       style={{
-        background: `${C.accentGold}26`,
-        color: C.accentGold,
-        borderColor: C.accentGold,
+        background: `${C.muted}1A`,
+        color: C.muted,
+        borderColor: C.border,
       }}
-      aria-label="Datos sintéticos — fallback mock cuando upstream REE no disponible"
-      data-testid="chip-mock"
+      data-testid="chip-loading"
     >
       <span
-        className="w-2 h-2 rounded-full"
-        style={{ background: C.accentGold }}
+        className="pulse-dot w-2 h-2 rounded-full"
+        style={{ background: C.muted }}
+        aria-hidden
       />
-      DEMO
+      CARGANDO
     </span>
   );
 }
 
 /**
- * Phase 2 §3.32 — discriminated union for the 4 render modes.
+ * Phase 2 §3.39 — discriminated union for the 3 render modes.
  *
  *   `'loading'`    Apollo fetch inicial en vuelo — chip "CARGANDO"
  *                   + chart loader (positional coherence: antes el
  *                   chip decía "EN VIVO" mientras body "Sin curva
  *                   horaria..." → UX gap engañoso).
  *   `'live'`       snap limpio de REE.
- *   `'historical'` fallback a ayer cuando live degraded.
- *   `'mock'`       sintético cuando ambos fallan.
+ *   `'historical'` fallback a ayer cuando live degraded; incluye el
+ *                   caso «live degradado + historical no disponible»
+ *                   (que §3.32 etiquetaba 'mock') — el chart
+ *                   muestra «Sin curva horaria disponible.» y los
+ *                   KPIs caen a `—`. Cero datos sintéticos en
+ *                   producción.
+ *
+ * Phase 2 §3.32 — el 4to mode `'mock'` fue ELIMINADO. La data
+ * sintética ahora vive en `mock-live-demand-card.tsx`, gateada tras
+ * `VITE_ENABLE_MOCK_FALLBACK=true`. Por reducción de 4 → 3 valores,
+ * los Records `CAPTION_FOR_MODE` / `COLOR_FOR_MODE` /
+ * `GRADIENT_ID_FOR_MODE` abajo pierden la entrada `mock`.
  */
-type Mode = "loading" | "live" | "historical" | "mock";
+type Mode = "loading" | "live" | "historical";
 
 // Footer caption per Mode. Declarative Record lookup vs nested ternary —
-// evita missed-branch bugs cuando se añada un 5to mode en el futuro.
+// evita missed-branch bugs cuando se añada un 4to mode en el futuro.
 const CAPTION_FOR_MODE: Record<Mode, string> = {
   loading: "Inicializando conexión con apiDatos REE…",
   live: "Datos en vivo desde apiDatos REE · snapshot cacheado en backend con TTL 60s · poll de 60s desde el frontend",
   historical:
     "Fallback histórico (ayer) · datos en vivo desde apiDatos REE no disponibles · poll de 60s",
-  mock: "DEMO MODE activo · fallback sintético mientras apiDatos REE no responde (4xx/5xx) · los datos NO son reales",
 };
 
 // Color per Mode: chart stroke, gradient stopColor, footer caption,
 // "Demanda real" legend dot, legend background. Record<Mode, …>
-// garantiza exhaustividad en compile-time — un 5to Mode value se
+// garantiza exhaustividad en compile-time — un 4to Mode value se
 // convierte en TS error, no en silent visual regression.
 //
-// Convenciones Fase 2 §3.32:
+// Convenciones Fase 2 §3.39:
 //   loading    → muted (curva no se renderiza; placeholder estático)
 //   live       → live (cyan, vibrante)
-//   historical → muted (desaturado: indica que estamos en fallback)
-//   mock       → accentGold (gold: indica explícitamente DEMO/sintético)
+//   historical → muted (desaturado: indica que estamos en fallback o
+//               upstream no responde)
 const COLOR_FOR_MODE: Record<Mode, string> = {
   loading: C.muted,
   live: C.live,
   historical: C.muted,
-  mock: C.accentGold,
 };
 
 // Gradient id per Mode: live + loading comparten `demandFill` porque
@@ -187,7 +208,6 @@ const GRADIENT_ID_FOR_MODE: Record<Mode, string> = {
   loading: "demandFill",
   live: "demandFill",
   historical: "demandFillHistorical",
-  mock: "demandFillMock",
 };
 
 function deriveMode(args: {
@@ -222,13 +242,18 @@ function deriveMode(args: {
     return "live";
   }
 
-  // Phase 2 §3.32 — loading-state gap fix (reviewer Q1 part 2):
+  // Phase 2 §3.39 — loading-state gap fix:
   //  Si live está degraded pero historical aún no llegó (o está
-  //  loading), NO saltar a 'mock' prematuramente. Mantener chip
-  //  HISTÓRICO (transitional) hasta que historical llegue O la query
-  //  fallece definitivamente. Sin esto el chip flickerea 'DEMO'
-  //  durante el window de 1-2s del loading query, que es honest-
-  //  data-integrity gap perceptible al usuario.
+  //  loading), mantener chip HISTÓRICO (transitional) hasta que
+  //  historical llegue O la query fallece definitivamente. Sin esto
+  //  el chip flickerea entre estados durante el window de 1-2s del
+  //  loading query, que es honest-data-integrity gap perceptible
+  //  al usuario.
+  //
+  // §3.39 — si tanto live como historical están degradados/missing,
+  // caemos a 'historical' igualmente; el chart handler detecta
+  // `renderedSnap=undefined` y muestra «Sin curva horaria
+  // disponible.» NO fabricamos números sintéticos.
   if (loadingHistorical || !historical) {
     return "historical";
   }
@@ -248,8 +273,12 @@ function deriveMode(args: {
     return "historical";
   }
 
-  // Otherwise (live degraded + historical returned but invalid): MOCK fallback.
-  return "mock";
+  // Phase 2 §3.39 — era `return "mock"` (auto-fallback sintético).
+  // Ahora devolvemos "historical" para mantener chip coherente, y
+  // dejamos que el chart renderice «Sin curva horaria disponible.»
+  // dado que renderedSnap será undefined (historicalHourly no cumple
+  // los 3 guards de arriba).
+  return "historical";
 }
 
 export default function LiveDemandCard() {
@@ -294,7 +323,10 @@ function LiveDemandCardBody({
     regionSlug,
   );
 
-  // Phase 2 §3.32 — discriminated mode + renderedSnap with mock fallback.
+  // Phase 2 §3.39 — discriminated mode (3 values) + renderedSnap
+  // sin fallback mock. Si tanto live como historical están
+  // degradados, `renderedSnap` queda undefined y el chart handler
+  // abajo muestra «Sin curva horaria disponible.» con KPIs `—`.
   const snap = liveDemand;
   const mode = deriveMode({
     live: snap,
@@ -303,21 +335,19 @@ function LiveDemandCardBody({
     regionSlug,
     dateYesterday,
   });
-  // Build the mock fallback synchronously (no Apollo) when mode='mock'.
-  // Phase 2 §3.32 — note that buildMockLiveDemand intentionally ignores
-  // `regionSlug`: DEMO_CURVE is Nacional-plausible regardless of user
-  // selection. Override at the mock-build layer keeps schema-level
-  // honesty (mock shape ≠ Canarias-shape even when Canarias pill active).
-  const mockSnap: LiveDemandData | undefined =
-    mode === "mock" ? buildMockLiveDemand() : undefined;
 
   // Final rendered snap used by chart, KPIs, footer.
+  //   live       → snap limpio de REE.
+  //   historical → historicalHourly (puede ser undefined si REE no
+  //                 responde: el chart handler lo detecta y muestra
+  //                 «Sin curva horaria disponible.»).
+  //   loading    → undefined (loader estático del chart).
   const renderedSnap: LiveDemandData | undefined =
     mode === "live"
       ? snap
       : mode === "historical"
         ? historicalHourly
-        : mockSnap;
+        : undefined;
 
   //Estado de error del LIVE. Aislamos el error de historical
   //(puede ser un backend transitorio) para no contaminar el ok-path.
@@ -363,11 +393,9 @@ function LiveDemandCardBody({
   }
 
   const chipSource: string | null | undefined =
-    mode === "mock"
-      ? (mockSnap?.timestamp ?? null)
-      : mode === "historical"
-        ? (historicalHourly?.timestamp ?? null)
-        : (snap?.timestamp ?? null);
+    mode === "historical"
+      ? (historicalHourly?.timestamp ?? null)
+      : (snap?.timestamp ?? null);
 
   return (
     <section data-testid="live-demand-card">
@@ -392,11 +420,11 @@ function LiveDemandCardBody({
           <div className="flex items-center gap-4 text-[11.5px]">
             <span
               className="flex items-center gap-1.5"
-              style={{ color: mode === "mock" ? C.accentGold : C.live }}
+              style={{ color: C.live }}
             >
               <span
                 className="w-2.5 h-0.5"
-                style={{ background: mode === "mock" ? C.accentGold : C.live }}
+                style={{ background: C.live }}
                 aria-hidden
               />
               Demanda real
@@ -574,10 +602,6 @@ function LiveDemandCardBody({
           {mode === "historical" ? (
             <span style={{ marginLeft: "auto" }}>
               Curva del {formatDateShort(dateYesterday)} ({region})
-            </span>
-          ) : mode === "mock" ? (
-            <span style={{ marginLeft: "auto" }}>
-              Datos sintéticos · upstream REE no disponible · NO ES REAL
             </span>
           ) : null}
         </div>

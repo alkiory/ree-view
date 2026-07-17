@@ -50,7 +50,7 @@ export default function StorageCard() {
       </div>
       <p className="px-5 pb-5 text-[10.5px]" style={{ color: C.muted }}>
         Próximamente · datos completos cuando el endpoint de almacenamiento esté
-        disponible (pendiente Fase 2).
+        disponible.
       </p>
     </Card>
   );

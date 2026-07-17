@@ -12,7 +12,6 @@ import KpiRow from './cards/kpi-row';
 import GenerationCard from './cards/generation-card';
 import ExchangeCard from './cards/exchange-card';
 import StorageCard from './cards/storage-card';
-import LiveDemandCard from './cards/live-demand-card';
 
 interface EnergyChartProps {
   startDate: string;
@@ -43,8 +42,8 @@ function buildDerived(
     balances.length === 0
       ? 0
       : balances.reduce((acc, b) => acc + (b.attributes?.total ?? 0), 0) /
-        balances.length /
-        1000;
+      balances.length /
+      1000;
 
   const internationalExchanges: InternationalExchangesProps['internationalExchanges'] = {};
   let saldoTotal = 0;
@@ -113,7 +112,6 @@ export default function EnergyChart({
         />
         <StorageCard />
       </div>
-      <LiveDemandCard />
     </div>
   );
 }

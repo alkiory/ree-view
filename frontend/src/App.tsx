@@ -1,8 +1,20 @@
 import { useState } from "react";
 import DataSelector from "./components/data-selector";
 import EnergyChart from "./components/energy-chart";
+import LiveDemandCard from "./components/cards/live-demand-card";
+import MockLiveDemandCard from "./components/cards/mock-live-demand-card";
 import { formatDate } from "./libs/date-formatter";
 import { C } from "./libs/design-tokens";
+
+// Phase 2 §3.39 — opt-in mock fallback para dev offline / sandbox.
+// Default: `false` (prod-safe). Se activa con `VITE_ENABLE_MOCK_FALLBACK=true`
+// en `.env.local` o al hacer `pnpm dev` con esa variable.
+//
+// Vite hace static-replace de `import.meta.env.*` en build-time:
+// cuando la flag es `false`/unset, el branch de MockLiveDemandCard
+// se elimina completamente del bundle (dead-code elimination).
+const USE_MOCK_FALLBACK =
+  import.meta.env.VITE_ENABLE_MOCK_FALLBACK === "true";
 
 export default function App() {
   const [filters, setFilters] = useState({
@@ -39,23 +51,13 @@ export default function App() {
           type={filters.type}
           groupId={filters.groupId}
         />
+        {/* Phase 2 §3.39 — LiveDemandCard top-level.
+            Antes vivía dentro de EnergyChart (buried under the energy
+            flow). Lo movemos aquí porque (a) la data live no depende
+            de los date filters del DataSelector, (b) así el branch
+            Mock/Live queda en un solo lugar visible para review. */}
+        {USE_MOCK_FALLBACK ? <MockLiveDemandCard /> : <LiveDemandCard />}
       </div>
-
-      {/* ───────────────────────────────────────────────────────────────────
-       * Footer de atribución (Phase 2 §3.32).
-       *   1. Alkiory        — desarrollo propio · https://alkiory.com
-       *   2. Frank Esteban Isdray — kit de diseño "Full Charts Components"
-       *                            publicado en Figma Community bajo CC BY 4.0
-       *                            · https://www.figma.com/@frankuxui
-       *
-       * POR QUÉ dos atribuciones visibles en página (no sólo 1):
-       *   - El usuario pidió ambas explícitamente.
-       *   - El CC BY 4.0 de la librería de diseño YA aparecía en el
-       *     pie del mockup inicial (paleta adaptada); consolidarlo
-       *     aquí evita redundancia + mantiene rastro visible.
-       * - POR QUÉ target="_blank" + rel="noopener noreferrer":
-       *   patrones estándar para enlaces externos (seguridad + UX).
-       * ─────────────────────────────────────────────────────────────────── */}
       <footer
         className="text-center pb-8 pt-6 px-6 border-t"
         style={{ borderColor: C.border }}
@@ -74,7 +76,7 @@ export default function App() {
             style={{ color: C.accentCyan }}
             data-testid="footer-alkiory"
           >
-            Alkiory
+            Alkiory 👨🏽‍💻
           </a>{" "}
         </p>
       </footer>

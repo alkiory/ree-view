@@ -53,8 +53,11 @@ describe('ReeClientService', () => {
     // Default env para que el constructor guard (ver §A.1) no falle
     // durante los tests del happy-path. Cada test que necesite el
     // camino fallido hace `delete process.env....` explícito.
+    // §3.36 — REE_LIVE_API_URL eliminado: la sección live-demand del
+    // frontend se reemplazó por un mock estático que no toca esta API.
     process.env.REE_API_URL = 'http://test.example/energy';
     process.env.REE_FRONTERAS_API_URL = 'http://test.example/fronteras';
+    // §3.37 — LIVE_API_URL restaurado. Sección live-demand re-activada.
     process.env.REE_LIVE_API_URL = 'http://test.example/live';
 
     const moduleRef: TestingModule = await Test.createTestingModule({
@@ -311,209 +314,172 @@ describe('ReeClientService', () => {
   });
 
   /**
-   * Fix A (investigación histórico-vacío): `fetchHistoricalHourly` ahora
-   * acepta `dateStr: string` con el input ORIGINAL del DTO y lo usa
-   * verbatim en el mensaje de error. Antes derivaba el día de
-   * `date.toISOString().slice(0,10)` (UTC-shift en servers no-UTC).
+   * §3.37 — bloque `describe('fetchHistoricalHourly ...')` ELIMINADO.
    *
-   * Fix B (zone-independent formatDate): los `params` a REE deben llevar
-   * `start_date=YYYY-MM-DD 00:00` / `end_date=YYYY-MM-DD 23:59` del día
-   * local del servidor, sin UTC-shift ni replace-muerto.
+   * §3.36 eliminó la sección live-demand entera. §3.37 la
+   * RESTAURA pero con un diseño simplificado:
+   *   - El método legacy `fetchHistoricalHourly(date, geoLimit)`
+   *     y sus 3 hermanos (`fetchCurrentDemand`, `fetchDailyDemandCurve`,
+   *     `fetchGenerationMix`) SE REEMPLAZAN por `fetchDemandaTiempoReal`
+   *     (canonical nuevo) + `fetchGenerationMix` (mix renewable,
+   *     endpoint separado).
+   *   - La curva histórica se construye ahora en el SERVICE layer con
+   *     `util/aggregate-hourly.ts:buildDemandCurve`. No hay método
+   *     `fetchHistoricalHourly` en ree-client.
+   *
+   * Los 2 tests nuevos para `fetchDemandaTiempoReal` están al final del
+   * archivo (ver bloque §3.37 — `fetchDemandaTiempoReal`).
    */
-  describe('fetchHistoricalHourly (Fix A + Fix B)', () => {
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // §3.37 — `fetchDemandaTiempoReal` (canonical nuevo)
+  // 2 specs: happy path + 400 REE error propagation.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  describe('fetchDemandaTiempoReal (§3.37 canonical)', () => {
     /**
-     * Estructura helper que refleja EXACTAMENTE la respuesta real de REE
-     * para fechas sin datos publicados (probe ground-truth de la
-     * investigación): `included` con 4 grupos (Prevista/Programada/Real/
-     * Programada total), todos con `content=[]`, sin `errors[]` y sin
-     * `links.next`. Esto es la firma diagnóstica de "REE no tiene data",
-     * no de un error de protocol.
+     * Helper — genera el array de 288 values 5-min esperado por la API
+     * REE real. Cada hour-h tiene value=`byHour[h]`. Replicamos el
+     * shape del probe 2026-07-17 (`/tmp/probe-demanda-tiempo-real.json`).
      */
-    const EMPTY_CONTENT_FROM_REE = {
+    const makeRealisticIncluded = () => ({
+      data: { type: 'Demanda', id: 'dem15' },
       included: [
         {
-          id: '2052',
-          type: 'Prevista',
-          attributes: { content: [] },
-        },
-        {
-          id: '2053',
-          type: 'Programada',
-          attributes: { content: [] },
-        },
-        {
-          id: '2037',
           type: 'Real',
-          attributes: { content: [] },
+          id: 2037,
+          attributes: {
+            title: 'Real',
+            values: Array.from({ length: 288 }, (_, i) => ({
+              value: 30000 + Math.floor(i / 12) * 100,
+              percentage: 0.25,
+              datetime: `2026-07-14T${String(Math.floor(i / 12)).padStart(2, '0')}:${String((i % 12) * 5).padStart(2, '0')}:00.000+02:00`,
+            })),
+          },
         },
         {
-          id: '2054',
-          type: 'Programada total',
-          attributes: { content: [] },
+          type: 'Prevista',
+          id: 2052,
+          attributes: {
+            title: 'Prevista',
+            values: Array.from({ length: 288 }, (_, i) => ({
+              value: 30500 + Math.floor(i / 12) * 100,
+              percentage: 0.26,
+              datetime: `2026-07-14T${String(Math.floor(i / 12)).padStart(2, '0')}:${String((i % 12) * 5).padStart(2, '0')}:00.000+02:00`,
+            })),
+          },
         },
       ],
-    };
+    });
 
-    /**
-     * FIX A — Test 1: el mensaje de error contiene el `dateStr` del input
-     * del DTO (`2026-07-15`), NO el `date.toISOString().slice(0,10)` UTC
-     * shifted (`2026-07-14` en CEST).
-     */
-    it('A1: error message contains the input dateStr (not UTC-shifted date)', async () => {
-      httpGet.mockReturnValue(of(createAxiosResponse(EMPTY_CONTENT_FROM_REE)));
+    it('returns parsed items array with {type, values[]} shape for Real + Prevista', async () => {
+      httpGet.mockReturnValue(
+        of(createAxiosResponse(makeRealisticIncluded())),
+      );
 
-      // El Date es local-CEST a propósito: expone el bug pre-fix.
-      const parsed = new Date('2026-07-15T00:00:00');
+      const items = await service.fetchDemandaTiempoReal(undefined);
+
+      // REE llamado 1 vez con URL composta base+pathSuffix+params.
+      expect(httpGet).toHaveBeenCalledTimes(1);
+      const [calledUrl, calledConfig] = httpGet.mock.calls[0];
+      expect(calledUrl).toBe('http://test.example/live/demanda/demanda-tiempo-real');
+      // start_date / end_date formato `YYYY-MM-DDTHH:MM` cross-TZ idempotente.
+      expect(calledConfig.params.start_date).toMatch(/^\d{4}-\d{2}-\d{2}T00:00$/);
+      expect(calledConfig.params.end_date).toMatch(/^\d{4}-\d{2}-\d{2}T23:59$/);
+      expect(calledConfig.params.time_trunc).toBe('hour');
+      expect(calledConfig.params.cached).toBe('true');
+
+      // Devuelve 2 items (Real + Prevista) con 288 values cada uno.
+      expect(items).toHaveLength(2);
+      expect(items[0].type).toBe('Real');
+      expect(items[0].values).toHaveLength(288);
+      expect(items[0].values[0]).toEqual({
+        value: 30000,
+        percentage: 0.25,
+        datetime: '2026-07-14T00:00:00.000+02:00',
+      });
+      expect(items[1].type).toBe('Prevista');
+      expect(items[1].values[0].value).toBe(30500);
+    });
+
+    it('passes geo_limit param when provided (sub-región != nacional)', async () => {
+      httpGet.mockReturnValue(
+        of(createAxiosResponse(makeRealisticIncluded())),
+      );
+
+      await service.fetchDemandaTiempoReal('peninsular');
+
+      const [, calledConfig] = httpGet.mock.calls[0];
+      expect(calledConfig.params.geo_limit).toBe('peninsular');
+    });
+
+    it('omits geo_limit param when called with undefined/nacional (default)', async () => {
+      httpGet.mockReturnValue(
+        of(createAxiosResponse(makeRealisticIncluded())),
+      );
+
+      await service.fetchDemandaTiempoReal(undefined);
+      let [, calledConfig] = httpGet.mock.calls[0];
+      expect(calledConfig.params.geo_limit).toBeUndefined();
+
+      httpGet.mockClear();
+
+      await service.fetchDemandaTiempoReal(null);
+      [, calledConfig] = httpGet.mock.calls[0];
+      expect(calledConfig.params.geo_limit).toBeUndefined();
+    });
+
+    it('throws InternalServerErrorException with REE detail on 400 JSON errors envelope', async () => {
+      const axiosErr = new AxiosError(
+        '400 Bad Request',
+        '400',
+        undefined,
+        undefined,
+        {
+          data: {
+            errors: [
+              {
+                code: 'E400',
+                status: '400',
+                title: 'Error Interno',
+                detail: 'Los datos solicitados no están disponibles',
+              },
+            ],
+          },
+          status: 400,
+          statusText: 'Bad Request',
+          headers: {},
+          config: {} as AxiosResponse['config'],
+        },
+      );
+      httpGet.mockReturnValue(throwError(() => axiosErr));
 
       await expect(
-        service.fetchHistoricalHourly(parsed, '2026-07-15'),
-      ).rejects.toThrow(
-        'Invalid historical response: empty content for nacional on 2026-07-15',
-      );
+        service.fetchDemandaTiempoReal(undefined),
+      ).rejects.toBeInstanceOf(InternalServerErrorException);
+
+      // El mensaje propaga `detail` verbatim (no "Failed to fetch live data: ..."
+      // genérico — mantiene la accionabilidad de §3.14).
+      await expect(
+        service.fetchDemandaTiempoReal(undefined),
+      ).rejects.toMatchObject({
+        message: expect.stringContaining(
+          'Los datos solicitados no están disponibles',
+        ),
+        cause: expect.objectContaining({}),
+      });
     });
 
-    /**
-     * FIX A — Test 2 (happy path): cuando REE devuelve contenido, el
-     * shape mapea correctamente a `{h, real, prevista}`. `prevista=real`
-     * es placeholder intencional (ver docstring §3.28 de la service).
-     */
-    it('A2: maps the hourly REE content to {h, real, prevista} entries', async () => {
-      httpGet.mockReturnValue(
-        of(
-          createAxiosResponse({
-            included: [
-              {
-                id: 'real',
-                type: 'Real',
-                attributes: {
-                  content: [
-                    {
-                      datetime: '2026-07-15T00:00:00.000+02:00',
-                      value: 24000,
-                    },
-                    {
-                      datetime: '2026-07-15T01:00:00.000+02:00',
-                      value: 23000,
-                    },
-                  ],
-                },
-              },
-            ],
-          }),
-        ),
-      );
+    it('throws InternalServerErrorException when response.data has no "included" (HTML 500 invalid slug)', async () => {
+      // REE devuelve 200 + HTML cuando el slug no es válido (Symfony
+      // 500 page) — el `response.data.included` es undefined y nuestro
+      // extractor lo marca como error. Discriminamos el path de catch:
+      // "Invalid live API response for ... missing 'included' field".
+      httpGet.mockReturnValue(of(createAxiosResponse({ data: 'html' })));
 
-      const parsed = new Date('2026-07-15T00:00:00');
-      const result = await service.fetchHistoricalHourly(
-        parsed,
-        '2026-07-15',
-      );
-
-      expect(result).toEqual([
-        { h: '00h', real: 24000, prevista: 24000 },
-        { h: '01h', real: 23000, prevista: 23000 },
-      ]);
-    });
-
-    /**
-     * FIX B — Test 1 (golden bug-exposer): independientemente del TZ
-     * del test runner, `new Date(yyyy, mm, dd, 0, 0, 0)` representa
-     * la medianoche LOCAL del día pedido. Con getters locales, los
-     * `params` siempre serán `start_date=YYYY-MM-DD 00:00` /
-     * `end_date=YYYY-MM-DD 23:59` — sin UTC-shift que el bug pre-fix
-     * introducía en CEST.
-     *
-     * Caveat: este test PASS post-fix en cualquier TZ. En runner UTC,
-     * la versión pre-fix también lo pasaba (porque `end.toISOString()`
-     * sí contenía `00:00` en UTC). La validación contra el UTC-shift es
-     * cruzada con el B2 + con la verificación runtime de la investigación.
-     */
-    it('B1: uses local getters to format start_date=YYYY-MM-DD 00:00 and end_date=YYYY-MM-DD 23:59', async () => {
-      httpGet.mockReturnValue(
-        of(
-          createAxiosResponse({
-            included: [
-              {
-                id: 'real',
-                type: 'Real',
-                attributes: {
-                  content: [
-                    { datetime: '2026-07-15T00:00:00.000Z', value: 100 },
-                  ],
-                },
-              },
-            ],
-          }),
-        ),
-      );
-
-      // Local midnight: misma fecha en cualquier TZ del runner.
-      const localMidnight = new Date(2026, 6, 15, 0, 0, 0);
-
-      await service.fetchHistoricalHourly(localMidnight, '2026-07-15');
-
-      const [, config] = httpGet.mock.calls[0];
-      expect(config.params.start_date).toBe('2026-07-15 00:00');
-      expect(config.params.end_date).toBe('2026-07-15 23:59');
-      expect(config.params.time_trunc).toBe('hour');
-      // region=undefined → omit `geo_limit` (nacional implícito).
-      expect(config.params.geo_limit).toBeUndefined();
-    });
-
-    /**
-     * FIX B — Test 2 (cross-TZ portable): el formateador extrae el día del
-     * calendario LOCAL del Date que el caller construyó, y la assertion
-     * usa los getters dinámicos del MISMO Date — lo que garantiza
-     * idempotencia cross-TZ del runner sin depender de stubs runtime
-     * (Node 20 / V8 cachea TZ al startup, por lo que `vi.stubEnv('TZ')`
-     * no surte efecto en este proceso long-lived).
-     *
-     * Caveat: B1 (arriba) y B2 prueban el mismo contrato con dos estilos
-     * de assertion distintos. B1 usa string fijo hardcoded (`'2026-07-15'`)
-     * construido sobre `new Date(2026, 6, 15, 0, 0, 0)` (que es local
-     * midnight en CUALQUIER TZ del runner, por construcción). B2 usa los
-     * getters dinámicos sobre `new Date('2026-07-15T00:00:00')` (sin Z,
-     * wall-clock local). Son equivalentes; la diferencia es para mostrar
-     * que el formatter respeta el contrato tanto con constructor
-     * posicional como con string ISO sin sufijo.
-     */
-    it('B2: formatDate is TZ-independent — derives day from local getters of the input Date', async () => {
-      httpGet.mockReturnValue(
-        of(
-          createAxiosResponse({
-            included: [
-              {
-                id: 'real',
-                type: 'Real',
-                attributes: {
-                  content: [
-                    {
-                      datetime: '2026-07-15T00:00:00.000Z',
-                      value: 100,
-                    },
-                  ],
-                },
-              },
-            ],
-          }),
-        ),
-      );
-
-      // Sin offset TZ: la fecha se interpreta como LOCAL-TZ del server.
-      const parsedFromDTO = new Date('2026-07-15T00:00:00');
-
-      await service.fetchHistoricalHourly(parsedFromDTO, '2026-07-15');
-
-      const [, config] = httpGet.mock.calls[0];
-      // Dynamic getters del MISMO Date que se pasa al servicio: así la
-      // assertion es estable cross-TZ del runner. El contrato del
-      // formatter es "el día que el caller construyó como local midnight".
-      const yyyy = parsedFromDTO.getFullYear();
-      const MM = String(parsedFromDTO.getMonth() + 1).padStart(2, '0');
-      const dd = String(parsedFromDTO.getDate()).padStart(2, '0');
-
-      expect(config.params.start_date).toBe(`${yyyy}-${MM}-${dd} 00:00`);
-      expect(config.params.end_date).toBe(`${yyyy}-${MM}-${dd} 23:59`);
+      await expect(
+        service.fetchDemandaTiempoReal(undefined),
+      ).rejects.toBeInstanceOf(InternalServerErrorException);
     });
   });
 });

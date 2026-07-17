@@ -212,27 +212,40 @@ export const yesterdayISODate = (): string => {
  * Ese caso NO entraba aquí porque el strict-AND legacy de §3.27
  * requiere todos los 3 sentinels en cero.
  *
- * Nueva estrategia (2 puertas OR):
- *   1. **§3.42 partial-degraded**: `curve.length < 2` — sienta el
- *      precedente de que cualquier snapshot sin curva útil está
- *      degradado independientemente de curMW. Esto caza el bug
- *      "buildDemandCurve silencioso + lastReal preservado".
+ * §3.43 — count-flexible aggregation fix. Tras aceptar counts
+ * múltiplos de 12 en `aggregateHourly` (12, 24, 144, 288), una curva
+ * de exactamente 1 bucket es ahora data legítima en el primer poll
+ * que complete la primera hora del día (~00:00-01:00 local).
+ *
+ * Estrategia (2 puertas OR) — umbral **estricto `=== 0`** post-§3.43:
+ *   1. **§3.42 partial-degraded**: `curve.length === 0` — el bug
+ *      "buildDemandCurve silencioso + lastReal preservado" siempre
+ *      resulta en `curve = []` (porque el `catch { curve = [] }` del
+ *      `live-demand.service.ts:162` es el único path hacia
+ *      partial-degraded). Por tanto `=== 0` es suficiente y NO
+ *      `< 2`: cazaría falsos positivos el primer poll del día
+ *      cuando el usuario merece ver la curva corta pero real, no
+ *      un fallback histórico (CONCERN #1 fix en este turn).
  *   2. **§3.27 legacy strict-AND**: `curMW === 0 && renewPct === 0
  *      && curve.length === 0` — preservado para el patrón REE
  *      completamente caído (3 fetches rechazan al unísono).
  *
- * Por qué `< 2` en lugar de `=== 0`: en un día muy temprano (poll
- * a las 00:05) podría haber 1 punto válido sin ser representativo.
- * El threshold `< 2` evita flicker entre "live" y "degraded" en
- * esos momentos transient sin perder el fallback histórico.
+ * Trade-off del cambio `< 2` → `=== 0` (§3.42 post-§3.43):
+ *   Si en el futuro aparece un path donde el service emite
+ *   `curve = [< 2 buckets]` con curMW extraído OK, este gate NO
+ *   lo cazaría. Mitigación: monitoring del patrón
+ *   `curMW > 0 && curve.length < 6` en logs de servicio; hoy no se
+ *   observa ese path (verificado con `aggregateHourly` throwing →
+ *   `catch` → `[]`).
  */
 export const isDegradedSnapshot = (
   snap: LiveDemandData | undefined,
 ): boolean => {
   if (!snap) return false;
-  // §3.42 partial-degraded — la curva no es representativa.
+  // §3.42 partial-degraded — curva vacía tras silent fail post-§3.43.
+  // (length === 1 ahora es data legítima temprana, NO fallback histórico.)
   const partialDegraded =
-    Array.isArray(snap.demandCurve) && snap.demandCurve.length < 2;
+    Array.isArray(snap.demandCurve) && snap.demandCurve.length === 0;
   // §3.27 legacy fully-degraded — todos los sentinels en 0.
   const fullyDegraded =
     snap.currentDemandMW === 0 &&

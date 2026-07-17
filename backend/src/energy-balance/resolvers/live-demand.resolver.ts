@@ -33,7 +33,7 @@ export class LiveDemandResolver {
    * significa opcional. Validación de `region` es automática por
    * NestJS (`@IsOptional` en DTO), así que un cliente que omita la
    * key entera queda como `undefined` (que `LiveDemandService` mapea
-   * a cacheKey 'Nacional').
+   * a cacheKey 'NACIONAL' — enum value, §3.41).
    */
   @Query(() => LiveDemandSnapshot, {
     name: 'getLiveSnapshot',
